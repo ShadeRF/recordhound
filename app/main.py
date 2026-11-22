@@ -882,6 +882,22 @@ def noseed_list():
     return {"items": [{"key": k, "name": v["name"]} for k, v in db.noseed().items()]}
 
 
+@app.get("/api/noseed/genres")
+def noseed_genres():
+    """Tags on the artists you own, most common first, for "Genres to leave out". Only what the last sync stored.
+    Counts each artist's top tags: those are the ones that leave an artist out (Syncer.compute)."""
+    from collections import Counter
+    p = "lf:" if _source_name() == "lastfm" else "ob:"
+    c, spell = Counter(), {}
+    for info in db.cache_get_many([p + r["key"] for r in db.library()]).values():
+        top = [t for t, _ in (info or {}).get("tags", []) if t not in engine.JUNK_TAGS][:engine.NOSEED_TAG_DEPTH]
+        for k, t in {engine.tag_key(t): t for t in top}.items():
+            c[k] += 1
+            spell.setdefault(k, Counter())[t] += 1
+    # spellings of one tag count together, shown the way most artists have it (like the Genres filter)
+    return {"genres": [{"tag": spell[k].most_common(1)[0][0], "n": n} for k, n in c.most_common(150)]}
+
+
 @app.get("/api/plex/sections")
 def plex_sections():
     return {"sections": [{"key": k, **v} for k, v in db.get_meta("plex_sections", {}).items() if v.get("type") == "artist"]}

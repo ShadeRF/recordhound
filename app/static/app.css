@@ -146,10 +146,12 @@
   .testrow { display: flex; align-items: center; gap: 12px; margin: 2px 0 6px 184px; }
   .tres { font-size: 13px; }
   .tres.ok { color: var(--good); } .tres.bad { color: var(--bad); }
-  .libs { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 6px 184px; }
-  .libs label { display: flex; gap: 6px; align-items: center; background: #221f1c; border: 1px solid var(--line); border-radius: 16px; padding: 4px 11px; font-size: 13px; cursor: pointer; }
-  .libs input { accent-color: var(--accent); }
-  .libs small { color: var(--dim); }
+  .librows { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+  .librow { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #221f1c; border: 1px solid var(--line); border-radius: 8px; padding: 6px 6px 6px 12px; }
+  .librow .libname { min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+  .libseg { flex: none; }
+  .seg.libseg button.on { background: rgba(239,100,80,.16); color: var(--accent); }
+  .libfield > label { align-self: start; padding-top: 10px; }
   .rangeval { display: flex; align-items: center; gap: 12px; }
   .rangeval input[type=range] { flex: 1; accent-color: var(--accent); border: 0; padding: 0; background: transparent; }
   .rangeval output { min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
@@ -394,7 +396,10 @@ h2.sh { font: 600 22px Georgia, serif; margin: 26px 0 14px; }
   .rate-poster { width: 200px; margin: 0 auto; }
   .person-head { grid-template-columns: 110px 1fr; gap: 16px; }
   .field { grid-template-columns: 1fr; }
-  .field .help, .testrow, .libs, .import-status { margin-left: 0; grid-column: 1; }
+  .field .help, .testrow, .import-status { margin-left: 0; grid-column: 1; }
+  .librow { flex-direction: column; align-items: stretch; gap: 6px; padding: 8px; }
+  .libseg { display: flex; } .libseg button { flex: 1; padding: 7px 6px; }
+  .libfield > label { padding-top: 0; }
   .pop { position: fixed; left: 8px !important; right: 8px; top: 110px; width: auto !important; }
 }
 .scard > .help { color: var(--dim); font-size: 12px; }
@@ -549,8 +554,6 @@ svg.inl { width: 14px; height: 14px; vertical-align: -2px; stroke: currentColor;
 .btn.on svg { fill: currentColor; }
 .chips.pick button { cursor: pointer; background: var(--panel); border: 1px solid var(--line); color: inherit; border-radius: 999px; padding: 5px 12px; font-size: 13px; margin: 0 6px 6px 0; }
 .chips.pick button.on { background: rgba(239,100,80,.16); border-color: var(--accent); color: var(--accent); }
-.chips.pick button::before { content: ""; display: inline-block; width: 11px; height: 11px; border: 1.5px solid var(--dim); border-radius: 3px; margin-right: 7px; vertical-align: -1px; }
-.chips.pick button.on::before { content: "✓"; background: var(--accent); border-color: var(--accent); color: #1c0d0a; font-size: 10px; line-height: 11px; text-align: center; font-weight: 700; }
 .ns-sum { font-size: 13px; margin: -6px 0 12px; color: var(--dim); }
 .ns-sum b { color: var(--text); font-weight: 600; }
 .chips .rm { display: inline-flex; align-items: center; gap: 4px; }
@@ -577,6 +580,14 @@ svg.inl { width: 14px; height: 14px; vertical-align: -2px; stroke: currentColor;
 .subnav { padding: 0 20px 10px; }
 .subnav .seg button { padding: 6px 14px; font-size: 13px; }
 @media (max-width: 560px) { .subnav { padding: 0 12px 10px; } }
+/* phones: the Missing switch scrolls sideways when it doesn't fit, and fades at the right like the filter bar */
+@media (max-width: 560px) {
+  .subnav { overflow-x: auto; scrollbar-width: none; }
+  .subnav::-webkit-scrollbar { display: none; }
+  .subnav .seg { display: flex; width: max-content; }
+  .subnav .seg button { white-space: nowrap; flex: none; }
+  .subnav.fade-r { -webkit-mask-image: linear-gradient(to left, transparent, #000 44px); mask-image: linear-gradient(to left, transparent, #000 44px); }
+}
 .opt { margin: 6px 0 12px; }
 .opt .help { margin: 2px 0 0 24px; color: var(--dim); font-size: 12px; }
 .gap-opts { gap: 16px; font-size: 13px; color: var(--dim); }
@@ -685,7 +696,6 @@ details.fold > summary:focus-visible, details.adv > summary:focus-visible { outl
 .wz-skip { font-size: 13px; }
 .wz-skip a { color: var(--accent); }
 .wz .scard .testrow { margin-left: 184px; }
-.wz .scard .field .libs { margin-left: 0; }   /* already in the field's second column */
 .wz-list { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 18px; }
 .wz-item { display: flex; align-items: center; gap: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
 .wz-item > div { flex: 1; min-width: 0; }
@@ -734,3 +744,15 @@ input[type=search]:focus, input[type=text]:focus, input[type=password]:focus, se
 input[type=search]::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; margin-left: 6px; cursor: pointer; opacity: .7;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a9187' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E") center/contain no-repeat; }
 input[type=search]::-webkit-search-cancel-button:hover { opacity: 1; }
+
+/* Don't learn from: chips spaced like everywhere else, help text clear of them */
+.chips.pick button { margin: 0 6px 6px 0; }
+.chips.pick + .help, .field .chips.pick ~ .help { margin-top: 4px; }
+
+/* Genres to leave out: every tag in your library, behind "More genres…" */
+#nsMoreBox > .link { margin: 0 0 8px; font-size: 13px; }
+.field.nsgenres > label { align-self: start; padding-top: 6px; }
+.ns-more { margin: 2px 0 8px; padding: 10px 10px 4px; border: 1px solid var(--line); border-radius: 10px; }
+.ns-more input[type=search] { width: 100%; max-width: 260px; margin-bottom: 10px; }
+.ns-more .chips.pick { max-height: 320px; overflow-y: auto; }
+.ns-more-note { font-size: 13px; margin: 0 0 8px; }

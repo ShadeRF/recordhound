@@ -26,6 +26,9 @@ JUNK_TAGS = {"seen live", "favorites", "favourite", "favorite", "albums i own", 
              "japanese", "london", "4ad", "sub pop", "warp", "matador", "domino", "xl recordings", "rough trade", "merge records"}
 
 
+NOSEED_TAG_DEPTH = 3   # "Genres to leave out" looks at each artist's top three tags
+
+
 def tag_key(tag):
     """One key for spellings of the same tag: "singer/songwriter", "singer-songwriter" and "Singer Songwriter"."""
     return re.sub(r"[^a-z0-9]+", "", (tag or "").lower()) or (tag or "").lower()

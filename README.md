@@ -34,7 +34,7 @@ I listen to music in two places: my own library in Plex and Plexamp, and streami
 
 So I built Recordhound to bring both together. It starts from your Plex library and adds your listening from wherever else you play music:
 
-- **All your listening counts.** Your star ratings and plays in Plex and Plexamp, plus your history from ListenBrainz, Spotify or YouTube Music (or Last.fm, with Last.fm Pro), shape one picture of your taste. An artist you stream a lot but don't own still counts, and *You Stream* lists those artists so you can add them to your library.
+- **All your listening counts.** Your star ratings and plays in Plex and Plexamp, plus your history from ListenBrainz, Spotify or YouTube Music (or Last.fm, with Last.fm Pro), shape one picture of your taste. An artist you stream a lot but don't own still counts, and *Missing › Artists* lists those artists so you can add them to your library.
 - **Every pick explains itself:** the artists of yours that led to it, and the genres and scenes it shares with your taste.
 - **You can tune it.** In Settings you choose how much artists you own but rarely play count, how strongly recent listening pulls, how many plays elsewhere it takes before an artist counts, and how well known picks should be. You can also stop libraries, genres or artists from shaping your picks.
 
@@ -82,14 +82,16 @@ Your settings and data carry over when you switch, so you can move between them 
 
 - **For You:** a *This week* summary (new picks, new releases, what's coming soon), *Top picks* (reshuffled weekly, never dominated by one of your artists), *New for you this week*, *Because you play…*, *Because you love…*, genre rows, *Deep cuts*, *New from artists you love*, *Albums you're missing*, *In your library, never played* and your saved artists.
 - **All Picks:** every pick with genre include/exclude, how well known an artist is (deep cuts, mid, well known), and sorting.
-- **You Stream:** artists you play a lot on ListenBrainz, Spotify, YouTube Music or Last.fm but don't own in Plex (or Lidarr), most-played first. The best list to send to Lidarr.
-- **Liked, not owned:** the songs you've liked on Spotify that aren't in Plex, grouped by album, newest like first. Owning any version of a song counts (a remaster, a live take, the same song on a compilation). Send an album to Lidarr (only that album is monitored), hide the ones you don't want, or make a Plex playlist of the liked songs you do own, for Plexamp. Needs the Spotify account connection.
+- **Missing:** everything that isn't yours yet, in four views.
+  - **Artists:** artists you play a lot on ListenBrainz, Spotify, YouTube Music or Last.fm but don't own in Plex (or Lidarr), most-played first. The best list to send to Lidarr.
+  - **Liked songs:** the songs you've liked on Spotify that aren't in Plex, grouped by album, newest like first. Owning any version of a song counts (a remaster, a live take, the same song on a compilation). Send an album to Lidarr (only that album is monitored), hide the ones you don't want, or make a Plex playlist of the liked songs you do own, for Plexamp. Needs the Spotify account connection.
+  - **Albums:** albums you're missing from artists you already collect.
+  - **New releases** from artists you love, including announced albums from MusicBrainz.
 - **Your Library:** albums you own but have never played, ranked by how much you like the artist and how well they fit your taste, each with a reason. One click puts the top 25, 50 or 100 in a Plex playlist for Plexamp.
 - **Rate:** rate the artists you play, one at a time (keys 1–5; hold Shift for a half star). Ratings go to the artist in Plex. You can also rate picks you already know, so they stop being suggested and shape the rest. Every artist page has a **Rate** button too.
-- **Albums you're missing** from artists you already collect, and **new releases** from artists you love, including announced albums from MusicBrainz.
 - **Artist pages:** 30-second previews, why it was picked, bio, albums with the ones you own marked, similar artists, *More like this*, and links to Spotify, Apple Music, Bandcamp, YouTube, MusicBrainz and Last.fm. Open artists you own straight in Plex.
 - **Lidarr:** add artists with your quality and metadata profiles and choose what to monitor.
-- **Save for later**, **Not interested**, **Already know them** (stops suggesting them without counting as a dislike), and **Don't learn from** for kids' music, someone else's albums, whole libraries or genres.
+- **Save for later**, **Not interested**, **Already know them** (stops suggesting them without counting as a dislike), and **Don't learn from** for kids' music, someone else's albums or genres. A whole Plex library can be set to *Own only* (counts as yours, doesn't shape your picks) or *Ignore*.
 - **History:** everything you've hidden or marked, with undo.
 - **Search** for any artist.
 - **Settings page** for every connection, with a **Test** button for each, and optional sign-in.

@@ -106,7 +106,7 @@ function emptyState() {
   const s = lastStatus;
   if (!s.configured) return `<div class="empty" style="grid-column:1/-1">Connect Plex to get started. <a href="#/settings">Open Settings</a></div>`;
   if (s.running) return `<div class="empty" style="grid-column:1/-1"><b>${esc(s.step || "Working")}</b>${s.progress ? " · " + esc(s.progress) : ""}<br><span class="muted">The first sync looks up every artist, which can take a while. Later syncs are quick.</span></div>`;
-  if (view === "stream" && !hasHistory()) return `<div class="empty" style="grid-column:1/-1">You Stream lists artists you play outside Plex, and no listening history is connected yet.<br><br>
+  if (view === "stream" && !hasHistory()) return `<div class="empty" style="grid-column:1/-1">Missing › Artists lists artists you play outside Plex, and no listening history is connected yet.<br><br>
     <button class="btn primary" data-open-setting="set-history">Open Settings › Listening history</button></div>`;
   return `<div class="empty" style="grid-column:1/-1">Nothing here with these filters.</div>`;
 }
@@ -168,7 +168,7 @@ $("pop").onclick = e => {
 };
 document.addEventListener("click", e => { if (openPop && !e.composedPath().includes($("pop"))) closePop(); });
 
-// ------------------------------------------------------------------ grid (All Picks / You Stream)
+// ------------------------------------------------------------------ grid (All Picks / Missing › Artists)
 const gridKind = () => view === "stream" ? "stream" : "new";
 let seq = 0;
 async function load(reset) {
@@ -781,7 +781,9 @@ function likedSongRow(s, underArtist) {   // underArtist: the row sits under its
     <div class="lk-box" hidden></div></div>`;
 }
 const LIKED_PAGE = 60;
-const streamSwitch = on => `<div class="seg stream-seg" role="tablist">${[["stream", "Artists"], ["liked", "Liked songs"]].map(([v, l]) =>
+// The Missing tab: everything that isn't yours yet, one switch row across its four pages
+const MISSING = [["stream", "Artists"], ["liked", "Liked songs"], ["gaps", "Albums"], ["releases", "New releases"]];
+const missingSwitch = on => `<div class="seg stream-seg" role="tablist" aria-label="Missing">${MISSING.map(([v, l]) =>
   `<button role="tab" data-go="${v}" aria-selected="${v === on}" class="${v === on ? "on" : ""}">${l}</button>`).join("")}</div>`;
 document.addEventListener("click", e => { const b = e.target.closest("[data-go]"); if (b && !b.classList.contains("on")) go(b.dataset.go); });
 const LIKED_TITLE = "Liked, not owned";
@@ -1077,7 +1079,7 @@ const SVC = {
   plex: { title: "Plex", sub: "Your music library, play counts and star ratings (Plexamp counts too).", url: "PLEX_URL", key: "PLEX_TOKEN", keyLabel: "Token",
     urlHelp: "Usually <code>http://YOUR-SERVER-IP:32400</code>", keyHelp: "Plex Web → any track → ⋯ → Get Info → View XML. The token is the <code>X-Plex-Token=</code> value in the URL." },
   lastfm: { optional: true, title: "Last.fm", sub: "Optional. Without a key, similar artists and genre tags come from MusicBrainz, ListenBrainz and Deezer. A key switches artist data to Last.fm and lets Recordhound read your scrobbles, but from December 1, 2026 a key only works while its account has <b>Last.fm Pro</b>. Keys are made at last.fm/api/account/create.",
-    key: "LASTFM_API_KEY", keyLabel: "API key", user: "LASTFM_USERNAME", userHelp: "Optional, and needs a key. Your scrobbles train your taste, and artists you scrobble a lot but don't own show up under <b>You Stream</b>. If you scrobble to ListenBrainz too, use that below instead: it's free." },
+    key: "LASTFM_API_KEY", keyLabel: "API key", user: "LASTFM_USERNAME", userHelp: "Optional, and needs a key. Your scrobbles train your taste, and artists you scrobble a lot but don't own show up under <b>Missing › Artists</b>. If you scrobble to ListenBrainz too, use that below instead: it's free." },
   listenbrainz: { optional: true, title: "ListenBrainz", sub: "Optional. Your listening history from ListenBrainz (free, open-source scrobbling). Your profile must be public. Listen on Apple Music, YouTube Music, Deezer or Tidal? ListenBrainz can collect those plays as you go: the <b>Web Scrobbler</b> browser extension sends what you play in a web player, and <b>multi-scrobbler</b> runs on your server.", user: "LISTENBRAINZ_USERNAME" },
   lidarr: { optional: true, title: "Lidarr", sub: "Optional. Add artists straight to Lidarr with your quality and metadata profiles.", url: "LIDARR_URL", key: "LIDARR_API_KEY", keyLabel: "API key",
     urlHelp: "e.g. <code>http://192.168.1.10:8686</code>", keyHelp: "Lidarr → Settings → General → API Key" },
@@ -1136,7 +1138,7 @@ function ytCard() {
 }
 // What "Don't learn from" leaves out right now, in one line
 function nsSummary() {
-  const out = [...(val("NOSEED_LIBRARIES") || []).map(l => `the ${l} library`), ...(val("COMP_TASTE") ? [] : ["soundtracks & compilations"]), ...(val("NOSEED_TAGS") || [])];
+  const out = [...(val("NOSEED_LIBRARIES") || []).map(l => `the ${l} library (own only)`), ...(val("COMP_TASTE") ? [] : ["soundtracks & compilations"]), ...(val("NOSEED_TAGS") || [])];
   return out.length ? `<b>Left out:</b> ${out.map(esc).join(", ")}` : "Nothing is left out yet.";
 }
 function svcCard(id, status) {
@@ -1160,6 +1162,63 @@ function rangeField(k, label, min, max, step, help, fmt = v => v) {
 }
 const pct = v => Math.round(v * 100) + "%";
 const NOSEED_TAG_LIST = ["children's music", "christmas", "soundtrack", "classical", "comedy", "musicals", "lullaby", "disney", "kids", "holiday"];
+// Each Plex library is Use (read, shapes your picks), Own only (read, in NOSEED_LIBRARIES) or Ignore (left out of PLEX_LIBRARIES).
+// Stored as before: PLEX_LIBRARIES lists the libraries read ([] = all of them), NOSEED_LIBRARIES the own-only ones.
+const LIB_STATES = [["use", "Use"], ["own", "Own only"], ["ignore", "Ignore"]];
+const LIB_HELP = "<b>Use</b> shapes your picks. <b>Own only</b> counts as yours, so nothing in it is suggested to you, but it doesn't shape your picks: good for a kids' library or someone else's music. <b>Ignore</b> isn't read at all.";
+const sameLib = (a, b) => (a || "").toLowerCase() === (b || "").toLowerCase();
+function libState(title, read, own) {
+  if ((read || []).length && !read.some(x => sameLib(x, title))) return "ignore";
+  return (own || []).some(x => sameLib(x, title)) ? "own" : "use";
+}
+// The two settings after setting one library to `state`; null if that would leave no library to read
+function libSettings(libs, read, own, title, state) {
+  const st = Object.fromEntries(libs.map(l => [l.title, sameLib(l.title, title) ? state : libState(l.title, read, own)]));
+  const keep = libs.map(l => l.title).filter(t => st[t] !== "ignore");
+  if (!keep.length) return null;
+  const others = (own || []).filter(x => !libs.some(l => sameLib(l.title, x)));   // own-only libraries Plex didn't list: kept as they are
+  return { PLEX_LIBRARIES: keep.length === libs.length ? [] : keep, NOSEED_LIBRARIES: [...others, ...keep.filter(t => st[t] === "own")] };
+}
+function libRows(libs, read, own, attr) {
+  return `<div class="field libfield"><label>Libraries</label><div><div class="librows">${libs.map(l => {
+    const st = libState(l.title, read, own);
+    return `<div class="librow"><span class="libname">${esc(l.title)}</span><span class="seg libseg" role="group" aria-label="${esc(l.title)}">${LIB_STATES.map(([v, label]) =>
+      `<button type="button" ${attr}="${esc(l.title)}" data-state="${v}" class="${st === v ? "on" : ""}" aria-pressed="${st === v}">${label}</button>`).join("")}</span></div>`;
+  }).join("")}</div><div class="help">${LIB_HELP}</div></div></div>`;
+}
+// "Genres to leave out": a few quick picks, plus every tag on the artists you own behind "More genres…"
+const tagKey = t => (t || "").toLowerCase().replace(/[^a-z0-9]+/g, "") || (t || "").toLowerCase();   // engine.tag_key
+let nsGenres = null, nsMore = false, nsFilter = "";
+function nsChip(t, n) {
+  const on = (val("NOSEED_TAGS") || []).some(x => tagKey(x) === tagKey(t));
+  return `<button type="button" data-nst="${esc(t)}" class="${on ? "on" : ""}" aria-pressed="${on}">${esc(t)}${n != null ? ` <small>${n}</small>` : ""}</button>`;
+}
+function renderGenres() {
+  if (!$("nsQuick")) return;
+  const quick = [...NOSEED_TAG_LIST];   // anything chosen from the full list shows here too, so folding it never hides a choice
+  for (const t of val("NOSEED_TAGS") || []) if (!quick.some(x => tagKey(x) === tagKey(t))) quick.push(t);
+  $("nsQuick").innerHTML = quick.map(t => nsChip(t)).join("");
+  const box = $("nsMoreBox");
+  if (nsGenres === null) box.innerHTML = "";
+  else if (!nsGenres.length) box.innerHTML = `<p class="muted ns-more-note">Sync once to list your genres.</p>`;
+  else {
+    if (!$("nsMoreBtn")) box.innerHTML = `<button type="button" class="link accent" id="nsMoreBtn"></button><div class="ns-more" id="nsMore">
+      <input type="search" id="nsFilter" placeholder="Filter tags" aria-label="Filter tags" autocomplete="off" spellcheck="false"><div class="chips pick" id="nsAll"></div></div>`;
+    $("nsMoreBtn").textContent = nsMore ? "Fewer genres" : "More genres…";
+    $("nsMoreBtn").setAttribute("aria-expanded", String(nsMore));
+    $("nsMore").hidden = !nsMore;
+    $("nsFilter").value = nsFilter;
+    if (nsMore) renderAllGenres();
+  }
+}
+function renderAllGenres() {
+  const f = nsFilter.trim().toLowerCase(), shown = nsGenres.filter(g => !f || g.tag.toLowerCase().includes(f));
+  $("nsAll").innerHTML = shown.length ? shown.map(g => nsChip(g.tag, g.n)).join("") : `<span class="muted">No tags match.</span>`;
+}
+async function loadGenres() {
+  try { nsGenres = (await api("/api/noseed/genres")).genres; } catch { return; }
+  renderGenres();
+}
 async function loadSettings() {
   try { S = await api("/api/settings"); } catch (e) { $("settingsBody").innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   draft = {}; setDirty(false); renderSettings();
@@ -1214,18 +1273,17 @@ function renderSettings() {
         <div class="help">Leave empty for one-click sign-in through the helper page. If Recordhound is on HTTPS, its own address ending in <code>/callback</code> works too, with no helper page. <code>${esc(S.spotify_loopback)}</code> is the old copy-and-paste way. Whatever is here must match your Spotify app's Redirect URIs exactly.</div></div>`)}
 `)}
       ${ytCard()}`,
-      "Everything here is optional. Listening outside Plex trains your taste, and artists you play a lot but don't own show up under <b>You Stream</b>.")],
+      "Everything here is optional. Listening outside Plex trains your taste, and artists you play a lot but don't own show up under <b>Missing › Artists</b>.")],
     ["taste", "Your taste", setSection("taste", "Your taste", `<div class="scard">
       ${rangeField("OWNED_WEIGHT", "Artists you own but rarely play", 0, 1, 0.05, "How much your collection shapes your taste even when you haven't played it. Keep it high if your library is curated.", pct)}
       ${rangeField("RECENT_WEIGHT", "What you've played lately", 0, 1.5, 0.1, "Extra pull for artists you've played in the last six months (Plex, plus ListenBrainz if connected). Raise it to follow what you're into now; 0 treats all listening the same.", pct)}
-      ${rangeField("MIN_PLAYS", "Plays before outside listening counts", 1, 20, 1, "Artists you've played fewer times than this in your Spotify history file, YouTube Music, ListenBrainz or Last.fm don't shape your picks or show up under You Stream. Plays in Plex and your connected Spotify account always count.")}
+      ${rangeField("MIN_PLAYS", "Plays before outside listening counts", 1, 20, 1, "Artists you've played fewer times than this in your Spotify history file, YouTube Music, ListenBrainz or Last.fm don't shape your picks or show up under Missing › Artists. Plays in Plex and your connected Spotify account always count.")}
       <h4>Don't learn from</h4>
-      <p class="sub">Tick anything that shouldn't shape your picks. It stays in your library and still counts as owned.</p>
+      <p class="sub">Choose anything that shouldn't shape your picks. It stays in your library and still counts as owned.</p>
       <p class="ns-sum" id="nsSum">${nsSummary()}</p>
-      <div class="field"><label>Libraries to leave out</label><div id="noseedLibs" class="chips pick"><span class="muted">Sync once to list your libraries.</span></div></div>
       <div class="field"><label>Albums to leave out</label><div><div class="chips pick"><button type="button" data-nocomp class="${val("COMP_TASTE") ? "" : "on"}">Soundtracks &amp; compilations</button></div>
         <div class="help">Albums credited to Various Artists, Original Soundtrack and the like. Normally a song you play from one counts for the artist who sang it.</div></div></div>
-      <div class="field"><label>Genres to leave out</label><div><div class="chips pick">${NOSEED_TAG_LIST.map(t => `<button type="button" data-nst="${esc(t)}" class="${(val("NOSEED_TAGS") || []).includes(t) ? "on" : ""}">${esc(t)}</button>`).join("")}</div>
+      <div class="field nsgenres"><label>Genres to leave out</label><div><div class="chips pick" id="nsQuick"></div><div id="nsMoreBox"></div>
         <div class="help">Artists tagged with these, wherever their albums are. "soundtrack" covers score composers like John Williams and Hans Zimmer.</div></div></div>
       <div class="field"><label>Artists left out</label><div id="noseedArtists"><span class="muted">None yet. Open any artist you own and tick <b>Don't learn from this artist</b>.</span></div></div>
     </div>`, "Star ratings count most, then how much you play an artist anywhere, then what you own. These settings adjust the rest.")],
@@ -1277,18 +1335,17 @@ function renderSettings() {
     <p class="muted" style="text-align:center;font-size:12px;margin-top:24px">Recordhound ${esc(lastStatus.version || "")} · Artist data from ${lastStatus.artist_source === "lastfm" ? "Last.fm" : "MusicBrainz, ListenBrainz and Deezer"} · Art and previews from Deezer · Lidarr for downloads</p>`;
   watchSections();
   focusPendingCard();
+  renderGenres();
   loadNoseed();
+  loadGenres();
   if (plexLibs) renderLibs();
 }
 function renderLibs() {
-  const chosen = val("PLEX_LIBRARIES") || [], all = !chosen.length;
-  $("plexLibs").innerHTML = `<div class="libs">${plexLibs.map(l => `<label><input type="checkbox" data-lib="${esc(l.title)}" ${all || chosen.includes(l.title) ? "checked" : ""}> ${esc(l.title)}</label>`).join("")}</div>`;
+  $("plexLibs").innerHTML = libRows(plexLibs, val("PLEX_LIBRARIES"), val("NOSEED_LIBRARIES"), "data-lib");
 }
 async function loadNoseed() {
   try {
-    const [secs, ns] = await Promise.all([api("/api/plex/sections"), api("/api/noseed")]);
-    const chosen = val("NOSEED_LIBRARIES") || [];
-    if (secs.sections.length) $("noseedLibs").innerHTML = secs.sections.map(x => `<button type="button" data-nsl="${esc(x.title)}" class="${chosen.includes(x.title) ? "on" : ""}">${esc(x.title)}</button>`).join("");
+    const ns = await api("/api/noseed");
     if (ns.items.length) $("noseedArtists").innerHTML = `<div class="chips">${ns.items.map(x => `<span class="rm">${esc(x.name)}<button type="button" data-unseed="${esc(x.key)}" title="Learn from them again">×</button></span>`).join("")}</div>`;
   } catch {}
 }
@@ -1299,10 +1356,7 @@ $("settingsBody").addEventListener("input", e => {
     if (el.type === "range") el.nextElementSibling.textContent = el.dataset.fmt === "pct" ? pct(el.value) : el.dataset.fmt === "n" ? fmtN(+el.value) : el.value;
     setDirty(true);
   }
-  if (el.dataset.lib !== undefined) {
-    const boxes = [...$("plexLibs").querySelectorAll("[data-lib]")], on = boxes.filter(b => b.checked).map(b => b.dataset.lib);
-    draft.PLEX_LIBRARIES = on.length === boxes.length ? [] : on; setDirty(true);
-  }
+  if (el.id === "nsFilter") { nsFilter = el.value; renderAllGenres(); }
 });
 $("settingsBody").addEventListener("change", async e => {
   if (e.target.id === "spFile" && e.target.files[0]) {
@@ -1330,11 +1384,20 @@ $("settingsBody").addEventListener("click", async e => {
   const t = e.target.closest("[data-test]"); if (t) { testSvc(t.dataset.test); return; }
   const nc = e.target.closest("[data-nocomp]");
   if (nc) { draft.COMP_TASTE = !!nc.classList.contains("on"); nc.classList.toggle("on", !draft.COMP_TASTE); setDirty(true); $("nsSum").innerHTML = nsSummary(); return; }
-  const ns = e.target.closest("[data-nst],[data-nsl]");
-  if (ns) {
-    const k = ns.dataset.nst ? "NOSEED_TAGS" : "NOSEED_LIBRARIES", v = ns.dataset.nst || ns.dataset.nsl;
-    const cur = new Set(val(k) || []); cur.has(v) ? cur.delete(v) : cur.add(v); draft[k] = [...cur]; ns.classList.toggle("on", cur.has(v)); setDirty(true); $("nsSum").innerHTML = nsSummary(); return;
+  const lib = e.target.closest("[data-lib]");
+  if (lib) {
+    const next = libSettings(plexLibs, val("PLEX_LIBRARIES"), val("NOSEED_LIBRARIES"), lib.dataset.lib, lib.dataset.state);
+    if (!next) { toast("Keep at least one library to read"); return; }
+    for (const [k, v] of Object.entries(next)) if (JSON.stringify(v) !== JSON.stringify(val(k) || [])) draft[k] = v;
+    setDirty(true); renderLibs(); $("nsSum").innerHTML = nsSummary(); return;
   }
+  const ns = e.target.closest("[data-nst]");
+  if (ns) {   // spellings of one tag are one choice
+    const v = ns.dataset.nst, cur = val("NOSEED_TAGS") || [], on = cur.some(x => tagKey(x) === tagKey(v));
+    draft.NOSEED_TAGS = on ? cur.filter(x => tagKey(x) !== tagKey(v)) : [...cur, v];
+    setDirty(true); renderGenres(); $("nsSum").innerHTML = nsSummary(); return;
+  }
+  if (id === "nsMoreBtn") { nsMore = !nsMore; renderGenres(); if (nsMore) $("nsFilter").focus({ preventScroll: true }); return; }
   const un = e.target.closest("[data-unseed]");
   if (un) {
     try { await api("/api/noseed", { method: "POST", body: JSON.stringify({ key: un.dataset.unseed, on: false }) }); loadNoseed(); toast("They'll shape your picks again."); } catch (err) { toast(err.message); }
@@ -1423,9 +1486,10 @@ function showView(v, keepFilters) {
   document.querySelectorAll(".view").forEach(x => x.classList.remove("on"));
   const sec = { home: "v-home", picks: "v-grid", stream: "v-grid", rate: "v-rate", history: "v-history", settings: "v-settings", setup: "v-setup" }[v] || "v-list";
   $(sec).classList.add("on");
-  document.querySelectorAll("#nav button, #gear").forEach(b => b.classList.toggle("on", b.dataset.view === v || (v === "liked" && b.dataset.view === "stream")));
-  const sn = v === "stream" || v === "liked";   // the switch stays put; only the page under it changes
-  $("subnav").hidden = !sn; if (sn) $("subnav").innerHTML = streamSwitch(v);
+  const sn = MISSING.some(([m]) => m === v);   // the switch stays put; only the page under it changes
+  document.querySelectorAll("#nav button, #gear").forEach(b => b.classList.toggle("on", b.dataset.view === v || (sn && b.dataset.view === "stream")));
+  $("subnav").hidden = !sn;
+  if (sn) { $("subnav").innerHTML = missingSwitch(v); const on = $("subnav").querySelector(".on"); if (on) on.scrollIntoView({ block: "nearest", inline: "nearest" }); subnavFade(); }
   const grid = v === "picks" || v === "stream";
   $("filters").style.display = $("activeRow").style.display = grid ? "" : "none";
   if (v !== "settings") $("savebar").classList.remove("on");
@@ -1456,6 +1520,7 @@ function route() {
   if (dirty && v !== "settings") { draft = {}; setDirty(false); }
   if (v === "search") { showView("search"); runSearch(safeDecode(parts[2] || "")); return; }
   if (v === "like") { showView("like"); loadLike(safeDecode(parts[2] || ""), safeDecode(parts[3] || "")); return; }
+  if (v === "missing") { history.replaceState(null, "", "#/stream"); showView("stream"); return; }   // the tab's first page
   showView(VIEWS.includes(v) ? v : "home");
 }
 const safeDecode = s => { try { return decodeURIComponent(s); } catch { return s; } };   // a hand-typed address like #/search/100%
@@ -1476,8 +1541,6 @@ const APP_SETUP = {
   requiredText: "connect Plex",
   required: ["plex"],
   why: { plex: "Recordhound reads your music libraries, play counts (Plexamp included) and star ratings. Nothing in Plex changes unless you ask." },
-  libType: null,
-  libHelp: "Untick any library you want ignored. You can change this later in Settings.",
   extras: [
     { title: "Connect ListenBrainz", why: "Free scrobbling that covers your listening outside Plex. Your profile needs to be public.", card: "listenbrainz", done: () => DONE.listenbrainz() },
     { title: "Add your Spotify history", why: "Upload the file Spotify emails you (no developer account needed), or connect your account.", card: "spotify", done: () => DONE.spotify() },
@@ -1545,9 +1608,7 @@ function renderSetup() {
         ${wzField(c.key, c.keyLabel, c.keyHelp)}
         <div class="testrow"><button class="btn" data-wz="test">Test connection</button>
           <span class="tres ${tested ? "ok" : wz.msg[id] ? "bad" : ""}">${wz.msg[id] ? (tested ? "✓ " : "✕ ") + esc(wz.msg[id]) : ""}</span></div>
-        ${id === "plex" && wz.libs ? `<div class="field"><label>Libraries</label><div><div class="libs wz-libs">${wz.libs.map(l =>
-          `<label><input type="checkbox" data-wz-lib="${esc(l.title)}" ${!(wz.vals.PLEX_LIBRARIES && wz.vals.PLEX_LIBRARIES.length) || wz.vals.PLEX_LIBRARIES.includes(l.title) ? "checked" : ""}> ${esc(l.title)}${l.type && APP_SETUP.libType ? ` <small>${APP_SETUP.libType(l.type)}</small>` : ""}</label>`).join("")}</div>
-          <div class="help">${APP_SETUP.libHelp}</div></div></div>` : ""}
+        ${id === "plex" && wz.libs ? libRows(wz.libs, wz.vals.PLEX_LIBRARIES, wz.vals.NOSEED_LIBRARIES, "data-wz-lib") : ""}
       </div>
       <div class="wz-actions"><button class="btn" data-wz="back">Back</button>
         <button class="btn primary" data-wz="next" ${tested && !wz.busy ? "" : "disabled"}>${wz.busy ? "Saving…" : "Continue"}</button></div>
@@ -1600,6 +1661,7 @@ async function wzNext() {
     const body = {};
     APP_SETUP.required.forEach(r => { const c = SVC[r]; if (c.url) body[c.url] = wzVal(c.url); body[c.key] = wzVal(c.key); });
     if (wz.vals.PLEX_LIBRARIES) body.PLEX_LIBRARIES = wz.vals.PLEX_LIBRARIES;
+    if (wz.vals.NOSEED_LIBRARIES) body.NOSEED_LIBRARIES = wz.vals.NOSEED_LIBRARIES;
     wz.busy = true; renderSetup();
     try {
       S = await api("/api/settings", { method: "PUT", body: JSON.stringify(body) });
@@ -1613,13 +1675,15 @@ async function wzNext() {
 $("setupBody").addEventListener("input", e => {
   const k = e.target.dataset.wzK;
   if (k) { wz.vals[k] = e.target.value; const id = wzSteps()[wz.step]; if (wz.ok[id]) { wz.ok[id] = false; wz.msg[id] = ""; renderSetup(); const el = document.querySelector(`[data-wz-k="${k}"]`); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } } }
-  if (e.target.dataset.wzLib !== undefined) {
-    const boxes = [...document.querySelectorAll("[data-wz-lib]")], on = boxes.filter(b => b.checked).map(b => b.dataset.wzLib);
-    wz.vals.PLEX_LIBRARIES = on.length === boxes.length ? [] : on;
-  }
 });
 $("setupBody").addEventListener("click", async e => {
   const a = e.target.closest("[data-wz]"), card = e.target.closest("[data-wz-card]"), gv = e.target.closest("[data-wz-go]");
+  const lib = e.target.closest("[data-wz-lib]");
+  if (lib) {
+    const next = libSettings(wz.libs, wz.vals.PLEX_LIBRARIES, wz.vals.NOSEED_LIBRARIES, lib.dataset.wzLib, lib.dataset.state);
+    if (!next) { toast("Keep at least one library to read"); return; }
+    Object.assign(wz.vals, next); renderSetup(); return;
+  }
   if (card) { openSetting(card.dataset.wzCard); return; }
   if (gv) { go(gv.dataset.wzGo); return; }
   if (!a) return;
@@ -1661,12 +1725,15 @@ $("homeRows").addEventListener("click", e => {
 const phone = matchMedia("(max-width: 560px)"), hdr = document.querySelector("header");
 function filterFade() { const f = $("filters"); f.classList.toggle("fade-r", f.scrollWidth - f.scrollLeft - f.clientWidth > 4); }
 $("filters").addEventListener("scroll", filterFade, { passive: true });
+function subnavFade() { const f = $("subnav"); f.classList.toggle("fade-r", f.scrollWidth - f.scrollLeft - f.clientWidth > 4); }
+$("subnav").addEventListener("scroll", subnavFade, { passive: true });
+new ResizeObserver(subnavFade).observe($("subnav"));
 new ResizeObserver(filterFade).observe($("filters"));   // narrower when a scrollbar appears
 function tuck(on) { if (hdr.classList.contains("tucked") === on) return; if (on) closePop(); hdr.classList.toggle("tucked", on); }
 function fitHeader() {
   if (!phone.matches) { tuck(false); document.body.style.removeProperty("--hdr"); return; }
   if (!hdr.classList.contains("tucked")) document.body.style.setProperty("--hdr", hdr.offsetHeight + "px");
-  filterFade();
+  filterFade(); subnavFade();
 }
 new ResizeObserver(fitHeader).observe(hdr);
 phone.addEventListener("change", fitHeader);

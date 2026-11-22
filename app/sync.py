@@ -317,9 +317,11 @@ class Syncer:
                     **{r["key"]: r["mbid"] for r in library if r.get("mbid")}}
         top = sorted(seeds, key=lambda k: -abs(seeds[k]["w"]))[:max(config.SEED_ARTISTS, 1)]
         infos = self._infos([(k, seeds[k]["name"], lib_mbid.get(k)) for k in top], "Looking up your artists")
-        if config.NOSEED_TAGS:
-            bad = {t.lower() for t in config.NOSEED_TAGS}
-            for k in [k for k in seeds if {t for t, _ in (infos.get(k) or {}).get("tags", [])[:3]} & bad]:
+        if config.NOSEED_TAGS:   # spellings of one tag count as one ("hip hop", "Hip-Hop")
+            bad, depth = {engine.tag_key(t) for t in config.NOSEED_TAGS}, engine.NOSEED_TAG_DEPTH
+            def tops(info):
+                return {engine.tag_key(t) for t in [t for t, _ in (info or {}).get("tags", []) if t not in engine.JUNK_TAGS][:depth]}
+            for k in [k for k in seeds if tops(infos.get(k)) & bad]:
                 seeds.pop(k)
 
         lib_keys = {r["key"] for r in library}

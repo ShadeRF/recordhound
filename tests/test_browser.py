@@ -332,10 +332,23 @@ def test_library_filter_keeps_focus_while_typing(page):
     assert page.locator("#libQ").input_value() == "ep" and page.locator("#libN").input_value() == pick
 
 
-def test_setup_walkthrough_keeps_every_library_ticked(page, site):
+def lib_states(page, attr="data-lib"):
+    """{library: chosen state} as the segmented controls show them."""
+    return page.evaluate(f"""() => Object.fromEntries([...document.querySelectorAll('[{attr}].on')].map(b => [b.getAttribute('{attr}'), b.dataset.state]))""")
+
+
+def test_setup_walkthrough_libraries_use_own_only_or_ignore(page, site):
     config = site["config"]
     keep = config.PLEX_URL, config.PLEX_TOKEN
     config.PLEX_URL, config.PLEX_TOKEN = "", ""     # a new install
+    sent = []
+
+    def put(route):   # see what Continue would save, without saving or starting a sync
+        if route.request.method == "PUT":
+            sent.append(json.loads(route.request.post_data))
+            route.abort()
+        else:
+            route.continue_()
     try:
         page.goto(page.base)
         settle(page)
@@ -345,19 +358,102 @@ def test_setup_walkthrough_keeps_every_library_ticked(page, site):
         page.locator('[data-wz-k="PLEX_TOKEN"]').fill("test-token")
         page.locator('[data-wz="test"]').click()
         settle(page)
-        boxes = page.locator("[data-wz-lib]")
-        assert boxes.count() == 3 and all(boxes.nth(i).is_checked() for i in range(3))
-        libs, token = page.locator(".wz-libs").bounding_box(), page.locator('[data-wz-k="PLEX_TOKEN"]').bounding_box()
-        assert abs(libs["x"] - token["x"]) < 4, "the library chips line up with the fields above, not indented again"
+        assert lib_states(page, "data-wz-lib") == {"Music": "use", "Live recordings": "use", "Audiobooks": "use"}
+        rows, token = page.locator(".wz .librows").bounding_box(), page.locator('[data-wz-k="PLEX_TOKEN"]').bounding_box()
+        assert abs(rows["x"] - token["x"]) < 4, "the library rows line up with the fields above, not indented again"
         assert "Connected to Test Plex v1.40.0 · 3 music libraries" in page.locator(".wz .tres").inner_text()
-        boxes.nth(1).uncheck()
-        boxes.nth(1).check()                        # all ticked again means "every library"
+        assert "Own only" in page.locator(".wz .libfield .help").inner_text()
+        page.locator('[data-wz-lib="Live recordings"][data-state="ignore"]').click()
+        page.locator('[data-wz-lib="Audiobooks"][data-state="own"]').click()
         page.locator('[data-wz="test"]').click()    # anything that redraws the step
         settle(page)
-        boxes = page.locator("[data-wz-lib]")
-        assert all(boxes.nth(i).is_checked() for i in range(3)), "boxes show unticked though every library will be read"
+        assert lib_states(page, "data-wz-lib") == {"Music": "use", "Live recordings": "ignore", "Audiobooks": "own"}
+        page.route("**/api/settings", put)
+        page.locator('[data-wz="next"]').click()
+        settle(page)
+        assert sent and sent[0]["PLEX_LIBRARIES"] == ["Music", "Audiobooks"] and sent[0]["NOSEED_LIBRARIES"] == ["Audiobooks"]
     finally:
         config.PLEX_URL, config.PLEX_TOKEN = keep
+
+
+def test_plex_card_libraries_save_each_state(page, site):
+    config = site["config"]
+    keep = {k: getattr(config, k) for k in ("PLEX_LIBRARIES", "NOSEED_LIBRARIES")}
+
+    def save():
+        page.locator("#saveBtn").click()
+        settle(page)
+        return {k: getattr(config, k) for k in keep}
+    try:
+        config.save({"PLEX_LIBRARIES": ["Music", "audiobooks"], "NOSEED_LIBRARIES": ["Audiobooks"]})   # saved by an older version
+        go(page, "settings")
+        page.wait_for_function("document.querySelectorAll('[data-lib]').length === 9")
+        page.locator("#svc-plex > summary").click()   # the Plex card opens like any other
+        assert lib_states(page) == {"Music": "use", "Live recordings": "ignore", "Audiobooks": "own"}, "old settings carry over"
+        assert "the Audiobooks library (own only)" in page.locator("#nsSum").inner_text()
+        assert "Libraries to leave out" not in page.locator("#set-taste").inner_text()
+        page.locator('[data-lib="Audiobooks"][data-state="ignore"]').click()   # Ignore wins over Own only
+        assert page.locator("#savebar").is_visible()
+        assert "own only" not in page.locator("#nsSum").inner_text()
+        assert save() == {"PLEX_LIBRARIES": ["Music"], "NOSEED_LIBRARIES": []}
+        assert "Sync now to apply" in page.locator("#toast").inner_text()
+        page.locator('[data-lib="Live recordings"][data-state="own"]').click()
+        assert save() == {"PLEX_LIBRARIES": ["Music", "Live recordings"], "NOSEED_LIBRARIES": ["Live recordings"]}
+        page.locator('[data-lib="Live recordings"][data-state="use"]').click()
+        page.locator('[data-lib="Audiobooks"][data-state="use"]').click()
+        assert save() == {"PLEX_LIBRARIES": [], "NOSEED_LIBRARIES": []}, "nothing ignored is stored as every library"
+        assert lib_states(page) == {"Music": "use", "Live recordings": "use", "Audiobooks": "use"}
+        for t in ("Music", "Live recordings"):
+            page.locator(f'[data-lib="{t}"][data-state="ignore"]').click()
+        page.locator('[data-lib="Audiobooks"][data-state="ignore"]').click()   # the last one left can't be ignored
+        assert "Keep at least one library to read" in page.locator("#toast").inner_text()
+        assert lib_states(page)["Audiobooks"] == "use"
+        page.locator("#discard").click()
+    finally:
+        config.save(keep)
+
+
+def test_more_genres_lists_your_tags(page, site):
+    config = site["config"]
+    keep = config.NOSEED_TAGS
+    try:
+        config.save({"NOSEED_TAGS": []})
+        go(page, "settings")
+        more = page.locator("#nsMoreBtn")
+        assert more.inner_text() == "More genres…" and page.locator("#nsMore").is_hidden()
+        more.click()
+        assert more.inner_text() == "Fewer genres"
+        chips = page.locator("#nsAll [data-nst]")
+        assert chips.first.get_attribute("data-nst") == "shoegaze" and chips.first.locator("small").inner_text() == "12"
+        assert "seen live" not in page.locator("#nsAll").inner_text()
+        assert page.locator("#nsFilter").get_attribute("placeholder") == "Filter tags"
+        page.locator("#nsFilter").fill("POP")
+        assert [c.get_attribute("data-nst") for c in chips.all()] == ["dream pop", "noise pop"]
+        page.locator('#nsAll [data-nst="dream pop"]').click()
+        assert page.locator('#nsAll [data-nst="dream pop"]').get_attribute("class") == "on"
+        assert page.locator('#nsQuick [data-nst="dream pop"].on').count() == 1, "a choice from the full list shows among the quick picks"
+        assert page.locator("#nsFilter").input_value() == "POP", "choosing keeps the filter"
+        more.click()
+        assert page.locator("#nsMore").is_hidden() and page.locator('#nsQuick [data-nst="dream pop"].on').is_visible()
+        assert "dream pop" in page.locator("#nsSum").inner_text()
+        page.locator("#saveBtn").click()
+        settle(page)
+        assert config.NOSEED_TAGS == ["dream pop"]
+        assert page.locator('#nsQuick [data-nst="dream pop"].on').count() == 1, "still shown after saving"
+        page.locator('#nsQuick [data-nst="dream pop"]').click()   # unchoosing it from the quick picks
+        page.locator("#saveBtn").click()
+        settle(page)
+        assert config.NOSEED_TAGS == []
+        assert page.locator('#nsQuick [data-nst="dream pop"]').count() == 0
+    finally:
+        config.save({"NOSEED_TAGS": keep})
+
+
+def test_more_genres_before_the_first_sync(page):
+    page.route("**/api/noseed/genres", lambda r: r.fulfill(json={"genres": []}))
+    go(page, "settings")
+    assert page.locator("#nsMoreBox").inner_text() == "Sync once to list your genres."
+    assert page.locator("#nsMoreBtn").count() == 0
 
 
 def test_spotify_connects_in_one_click(page, site, monkeypatch):
@@ -521,7 +617,7 @@ def test_liked_not_owned_lists_missing_songs_and_hides_albums(page, monkeypatch)
         at = page.locator("#subnav").bounding_box()
         page.click("#subnav [data-go=liked]")
         settle(page)
-        assert page.locator("#nav button.on").inner_text() == "You Stream"
+        assert page.locator("#nav button.on").inner_text() == "Missing"
         rows = page.locator(".lk-row")
         assert rows.count() == 2 and "Isabelle" in rows.first.inner_text()
         assert "2 songs of the 3 you've liked" in view(page).inner_text()
@@ -542,6 +638,57 @@ def test_liked_not_owned_lists_missing_songs_and_hides_albums(page, monkeypatch)
     finally:
         for k in ("spotify_liked", "plex_songs", "liked_hidden"):
             db.set_meta(k, None)
+
+
+def test_missing_tab_switches_between_its_four_pages(page):
+    go(page, "home")
+    tab = page.locator('#nav button[data-view="stream"]')
+    assert tab.inner_text() == "Missing" and "You Stream" not in page.locator("#nav").inner_text()
+    tab.click()
+    settle(page)
+    assert page.evaluate("location.hash") == "#/stream"
+    switch = page.locator("#subnav [data-go]")
+    assert switch.all_inner_texts() == ["Artists", "Liked songs", "Albums", "New releases"]
+    at = page.locator("#subnav").bounding_box()
+    for v, sec, title in (("liked", "v-list", "Liked, not owned"), ("gaps", "v-list", "Albums you're missing"),
+                          ("releases", "v-list", "New from artists you love"), ("stream", "v-grid", "You stream these, but don't own them")):
+        page.click(f"#subnav [data-go={v}]")
+        settle(page)
+        assert page.evaluate("location.hash") == "#/" + v
+        assert view(page).get_attribute("id") == sec and title in view(page).inner_text(), v
+        assert page.locator("#nav button.on").inner_text() == "Missing", v
+        assert page.locator(f"#subnav [data-go={v}].on").count() == 1
+        assert page.locator("#subnav").bounding_box() == at, f"the switch moved on {v}"
+    for v in ("stream", "liked", "gaps", "releases"):   # old addresses still work, and keep the tab lit
+        go(page, v)
+        assert page.locator("#nav button.on").inner_text() == "Missing" and page.locator(f"#subnav [data-go={v}].on").count() == 1
+    go(page, "missing")
+    assert page.evaluate("location.hash") == "#/stream" and view(page).get_attribute("id") == "v-grid"
+    go(page, "picks")
+    assert page.locator("#subnav").is_hidden()
+
+
+def test_missing_switch_scrolls_sideways_on_a_phone(browser, site):
+    ctx = browser.new_context(viewport={"width": 320, "height": 700}, is_mobile=True, has_touch=True)
+    ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(site["base"]) else r.abort())
+    p = ctx.new_page()
+    try:
+        p.goto(site["base"] + "#/stream")
+        settle(p)
+        sn = p.locator("#subnav")
+        assert p.evaluate("document.documentElement.scrollWidth <= innerWidth"), "the page itself never scrolls sideways"
+        assert p.evaluate("(() => { const s = document.getElementById('subnav'); return s.scrollWidth > s.clientWidth; })()")
+        assert "fade-r" in sn.get_attribute("class")
+        p.goto(site["base"] + "#/releases")   # the chosen view scrolls into sight
+        settle(p)
+        box, on = sn.bounding_box(), p.locator("#subnav .on").bounding_box()
+        assert on["x"] + on["width"] <= box["x"] + box["width"] + 1
+        p.mouse.wheel(0, 600)
+        p.wait_for_timeout(300)
+        if p.evaluate("document.documentElement.scrollHeight > innerHeight + 100"):
+            assert sn.is_hidden(), "the switch tucks away with the other rows"
+    finally:
+        ctx.close()
 
 
 def test_liked_not_owned_keeps_loading_as_you_scroll(page, monkeypatch):
@@ -799,7 +946,7 @@ def test_settings_wording(page, site):
         page.wait_for_function("document.getElementById('tres-plex').textContent.includes('Connected')")
         assert page.locator("#tres-plex").text_content() == "✓ Connected to Test Plex v1.40.0 · 3 music libraries"
         labels = page.locator("#set-taste .field > label").all_inner_texts()
-        for want in ("Libraries to leave out", "Albums to leave out", "Genres to leave out", "Artists left out"):
+        for want in ("Albums to leave out", "Genres to leave out", "Artists left out"):
             assert any(want in x for x in labels), (want, labels)
         reset = page.locator('[data-maint="clear-feedback"]')
         n = db.stats()["feedback"]
