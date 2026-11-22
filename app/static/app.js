@@ -422,6 +422,7 @@ function renderDrawer(r, loading) {
       <div class="help" style="color:var(--dim);font-size:12px;margin:4px 0 0 24px">Keep them in your library, but stop them from shaping your picks. Good for kids' music or someone else's albums.</div></div>` : ""}
     <div style="height:30px"></div>`;
   if (loading) $("drawer").scrollTop = 0;   // a newly opened artist starts at the top
+  else if (r.owned) checkAlbumsOwned(r);
   const st = $("seenStars");
   if (st) { st.onclick = e => { const b = e.target.closest("[data-star]"); if (b) rateArtist(starValue(b, e)); }; starHover(st); }
   paintTracks();
@@ -448,6 +449,27 @@ function showAlbum(i) {
   box.scrollIntoView({ block: "nearest", behavior: "smooth" });
   if (a.id) loadAlbumTracks(r, a, i);
 }
+function markAlbumOwned(i) {
+  const tile = document.querySelector(`#drawer button[data-alb="${i}"]`);
+  if (tile && !tile.querySelector(".own-b")) { tile.classList.add("own"); tile.insertAdjacentHTML("afterbegin", `<span class="own-b">OWNED</span>`); }
+}
+// An artist you own: look through their other albums' track lists in the background (a few at a time; Recordhound
+// keeps them for 30 days), so albums you have every track of show OWNED without opening each one.
+let albCheckFor = null;
+async function checkAlbumsOwned(r) {
+  if (albCheckFor === r.key) return;
+  albCheckFor = r.key;
+  const todo = (r.albums || []).slice(0, 24).map((a, i) => [a, i]).filter(([a]) => !a.owned && a.id);
+  const worker = async () => {
+    while (todo.length) {
+      if (current?.key !== r.key) return;   // you've opened someone else
+      const [a, i] = todo.shift();
+      let d; try { d = await api(`/api/album/${encodeURIComponent(a.id)}/tracks?name=${encodeURIComponent(r.name)}&album=${encodeURIComponent(a.title)}`); } catch { continue; }
+      if (d.all_owned && current?.key === r.key) { a.owned = true; markAlbumOwned(i); }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+}
 const mmss = s => s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "";
 async function loadAlbumTracks(r, a, i) {
   let d; try { d = await api(`/api/album/${encodeURIComponent(a.id)}/tracks?name=${encodeURIComponent(r.name)}&album=${encodeURIComponent(a.title)}`); }
@@ -455,9 +477,7 @@ async function loadAlbumTracks(r, a, i) {
   const box = $("albBox"); if (!box || box.hidden || box.dataset.i !== String(i) || current !== r) return;   // you've opened something else since
   albumTracks = d.tracks.map((t, n) => ({ ...t, i: n, album: a.id, cover: a.cover, by: t.artist || r.name }));
   if (d.all_owned && !a.owned) {   // you have every track, filed under other album names: it counts as owned
-    a.owned = true;
-    const tile = document.querySelector(`#drawer button[data-alb="${i}"]`);
-    if (tile && !tile.querySelector(".own-b")) { tile.classList.add("own"); tile.insertAdjacentHTML("afterbegin", `<span class="own-b">OWNED</span>`); }
+    a.owned = true; markAlbumOwned(i);
     box.querySelector("[data-alb-lidarr]")?.remove();
     const sm = box.querySelector(".albinfo small"); if (sm && !sm.textContent.includes("library")) sm.textContent += " · in your library";
   }

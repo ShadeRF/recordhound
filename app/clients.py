@@ -140,6 +140,32 @@ def lead_artist(credit):
     return parts[0] if parts else None
 
 
+# "Song (Instrumental)", "Song - Live at Wembley", "Album (Remixes)": a different recording from the one you own, even
+# though the forgiving song match would call it the same song.
+_VERSION = re.compile(r"[(\[\-–].*\b(instrumentals?|remix(es)?|live|acoustic|karaoke|demos?|a ?cappella)\b", re.I)
+
+
+def tracks_owned(tracks, artist, album_title, songs):
+    """Which of an album's tracks you own in Plex."""
+    if not songs:
+        return [False] * len(tracks)
+    special = bool(_VERSION.search(album_title or ""))
+    out = []
+    for t in tracks:
+        if special or _VERSION.search(t.get("title") or ""):
+            out.append(False)
+            continue
+        out.append(any(f"{ak}|{sk}" in songs for sk in song_keys(t.get("title"))
+                       for ak in credit_keys(artist) | credit_keys(t.get("artist") or ""))
+                   or any(f"album:{album_key(album_title)}|{sk}" in songs for sk in song_keys(t.get("title"))))
+    return out
+
+
+def owns_every_track(tracks, artist, album_title, songs):
+    have = tracks_owned(tracks or [], artist, album_title, songs)
+    return len(have) >= 2 and all(have)
+
+
 def owned_track(t, songs):
     """The Plex track for a liked song, if you own it under any of its credited artists."""
     for sk in song_keys(t.get("title")):

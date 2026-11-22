@@ -1030,3 +1030,30 @@ def test_phone_header_tucks_away_while_scrolling_down(browser, site):
         assert p.evaluate(where) == before, "the page moved when the header changed"
     finally:
         ctx.close()
+
+
+def test_albums_you_have_every_track_of_show_owned_without_opening_them(page, site):
+    from app import db
+    from app.clients import artist_key, song_key
+    lib = next(r for r in db.library_map().values() if r.get("albums"))
+    before = db.conn().execute("SELECT json, at FROM cache WHERE k=?", ("dz:" + lib["key"],)).fetchone()
+    db.cache_put("dz:" + lib["key"], {"id": 1, "name": lib["name"], "albums": [
+        {"id": 44, "title": "Filed Elsewhere EP", "type": "ep", "date": "2026-01-01"},
+        {"id": 45, "title": "Not Mine", "type": "album", "date": "2020-01-01"}]})
+    db.cache_put("dzalb:44", [{"title": "Arrival", "artist": lib["name"]}, {"title": "Vacation", "artist": lib["name"]}])
+    db.cache_put("dzalb:45", [{"title": "Arrival", "artist": lib["name"]}, {"title": "Something Else", "artist": lib["name"]}])
+    keep = db.get_meta("plex_songs")
+    db.set_meta("plex_songs", {f"{lib['key']}|{song_key(t)}": "1" for t in ("Arrival", "Vacation")})
+    db.commit()
+    try:
+        go(page, "home")
+        page.evaluate("([k, n]) => openArtist(k, n)", [lib["key"], lib["name"]])
+        page.wait_for_selector("#drawer button[data-alb='0'] .own-b")   # every track is in Plex: owned, no click needed
+        page.wait_for_timeout(500)
+        assert not page.locator("#drawer button[data-alb='1'] .own-b").count()   # one track short: not owned
+    finally:
+        db.conn().execute("DELETE FROM cache WHERE k IN (?, 'dzalb:44', 'dzalb:45')", ("dz:" + lib["key"],))
+        if before:
+            db.conn().execute("INSERT INTO cache(k, json, at) VALUES (?, ?, ?)", ("dz:" + lib["key"], before[0], before[1]))
+        db.set_meta("plex_songs", keep)
+        db.commit()

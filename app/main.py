@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, auth, security, config, db, engine
-from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, SpotifyNoDevice, album_key, owned_track, special_release, artist_key, artist_source, credit_keys, song_key, song_keys,
+from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, SpotifyNoDevice, album_key, owned_track, special_release, artist_key, artist_source, credit_keys, song_key, song_keys, tracks_owned as _tracks_owned, owns_every_track as _owns_every_track,
                       listenbrainz_top_artists, parse_spotify_export, parse_youtube_music, spotify_auth_url, spotify_exchange, spotify_pasted, spotify_redirect,
                       SPOTIFY_HELPER, SPOTIFY_LOOPBACK)
 from .sync import Syncer, friendly_error
@@ -557,32 +557,6 @@ def _deezer(key, name, max_age=14):
         db.cache_put("dz:" + key, hit)
         db.commit()
     return hit
-
-
-# "Song (Instrumental)", "Song - Live at Wembley", "Album (Remixes)": a different recording from the one you own, even
-# though the forgiving song match would call it the same song.
-_VERSION = re.compile(r"[(\[\-–].*\b(instrumentals?|remix(es)?|live|acoustic|karaoke|demos?|a ?cappella)\b", re.I)
-
-
-def _tracks_owned(tracks, artist, album_title, songs):
-    """Which of an album's tracks you own in Plex."""
-    if not songs:
-        return [False] * len(tracks)
-    special = bool(_VERSION.search(album_title or ""))
-    out = []
-    for t in tracks:
-        if special or _VERSION.search(t.get("title") or ""):
-            out.append(False)
-            continue
-        out.append(any(f"{ak}|{sk}" in songs for sk in song_keys(t.get("title"))
-                       for ak in credit_keys(artist) | credit_keys(t.get("artist") or ""))
-                   or any(f"album:{album_key(album_title)}|{sk}" in songs for sk in song_keys(t.get("title"))))
-    return out
-
-
-def _owns_every_track(tracks, artist, album_title, songs):
-    have = _tracks_owned(tracks or [], artist, album_title, songs)
-    return len(have) >= 2 and all(have)
 
 
 @app.get("/api/album/{album_id}/tracks")

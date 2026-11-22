@@ -10,7 +10,7 @@ from datetime import date, timedelta
 import requests
 
 from . import config, db, engine
-from .clients import (APIError, Deezer, LastFM, Lidarr, OpenArtists, Plex, Spotify, album_key, artist_key, artist_source, forget_lastfm_check, owned_track, same_song, special_release,
+from .clients import (APIError, Deezer, LastFM, Lidarr, OpenArtists, Plex, Spotify, album_key, artist_key, artist_source, forget_lastfm_check, owned_track, owns_every_track, same_song, special_release,
                       listenbrainz_top_artists)
 
 log = logging.getLogger("recordhound")
@@ -410,6 +410,7 @@ class Syncer:
         today = date.today()
         recent = (today - timedelta(days=120)).isoformat()
         gaps, releases = [], []
+        songs = db.get_meta("plex_songs")
         for k in top:
             a = found.get(k) or {}
             if a.get("missing") and not mbrg.get(k):
@@ -422,7 +423,8 @@ class Syncer:
                 if ak in seen or al.get("type") not in ("album", "ep") or _same_album(ak, al.get("date"), seen):
                     continue
                 seen[ak] = al.get("date")
-                albums.append({**al, "owned": ak in owned, "artist": seeds[k]["name"], "artist_key": k})
+                have = ak in owned or (k in lib and owns_every_track(db.cache_get(f"dzalb:{al['id']}", 30), seeds[k]["name"], al["title"], songs))
+                albums.append({**al, "owned": have, "artist": seeds[k]["name"], "artist_key": k})
             for g in mbrg.get(k, []):   # new releases Deezer doesn't have yet, including announced ones (not used for gaps)
                 ak = album_key(g["title"])
                 if ak in seen or ak in owned or len(g["date"]) < 7 or g["date"] < recent or _same_album(ak, g["date"], seen):
