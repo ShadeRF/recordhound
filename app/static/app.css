@@ -596,6 +596,7 @@ svg.inl { width: 14px; height: 14px; vertical-align: -2px; stroke: currentColor;
 .lk-sp { border-color: rgba(30,215,96,.55); color: #e8f7ee; }
 .lk-sp:hover { background: rgba(30,215,96,.12); border-color: #1ed760; }
 .lk-sp svg { width: 13px; height: 13px; fill: #1ed760; stroke: none; }
+.lk-was { color: var(--dim); font-size: 12px; }
 .lk-when { font-size: 12px; color: var(--dim); margin-top: 6px; }
 .lk-songs { font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; }
 .lk-heart { color: var(--accent); }

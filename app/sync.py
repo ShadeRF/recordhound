@@ -10,7 +10,7 @@ from datetime import date, timedelta
 import requests
 
 from . import config, db, engine
-from .clients import (APIError, Deezer, LastFM, Lidarr, OpenArtists, Plex, Spotify, album_key, artist_key, artist_source, forget_lastfm_check,
+from .clients import (APIError, Deezer, LastFM, Lidarr, OpenArtists, Plex, Spotify, album_key, artist_key, artist_source, forget_lastfm_check, owned_track, song_key,
                       listenbrainz_top_artists)
 
 log = logging.getLogger("recordhound")
@@ -93,6 +93,10 @@ class Syncer:
                     self.albums()
                 except Exception as e:
                     self._warn(f"Albums: {friendly_error(e)}")
+                try:
+                    self.link_singles()
+                except Exception as e:
+                    self._warn(f"Singles: {friendly_error(e)}")
             db.set_meta("last_sync" if full else "last_compute", int(time.time()))
             self._step("done")
         except Exception as e:
@@ -155,9 +159,72 @@ class Syncer:
             except Exception as e:
                 self._warn(f"Lidarr: {friendly_error(e)}")
 
+    SINGLE_RECHECK_DAYS = 14   # a single with no album yet is looked at again after this long
+    SINGLE_ARTISTS_PER_SYNC = 300   # keeps one sync from running long; the rest carry over to the next
+
+    def link_singles(self):
+        """Liked songs that came out as singles often end up on an album later. Find that album on Deezer (the artist's
+        albums and EPs, then their track lists), so Liked, not owned can offer the album instead of the single."""
+        liked, songs = db.get_meta("spotify_liked"), db.get_meta("plex_songs") or {}
+        if not liked or (self.sources is not None and "spotify_liked" not in self.sources):
+            return
+        links, now = dict(db.get_meta("single_links") or {}), time.time()
+        due = {}
+        for t in liked:
+            if t.get("album_type") != "single" or not t.get("id") or owned_track(t, songs):
+                continue
+            old = links.get(t["id"])
+            if old and (old.get("album") or now - old.get("at", 0) < self.SINGLE_RECHECK_DAYS * 86400):
+                continue
+            artist = t.get("album_artist") or (t.get("artists") or [""])[0]
+            due.setdefault(artist_key(artist), (artist, []))[1].append(t)
+        if not due:
+            return
+        dz, found = self.deezer_factory(), 0
+        for n, (key, (artist, tracks)) in enumerate(list(due.items())[:self.SINGLE_ARTISTS_PER_SYNC]):
+            if n % 10 == 0:
+                self._step("Finding albums for liked singles", f"{n:,} of {min(len(due), self.SINGLE_ARTISTS_PER_SYNC):,} artists")
+            try:
+                albums = self._dz_albums(dz, key, artist)
+                for t in tracks:
+                    hit = self._album_with(dz, albums, song_key(t.get("title")))
+                    links[t["id"]] = {"at": int(now), "album": hit}
+                    found += bool(hit)
+            except Exception as e:   # Deezer hiccup: try these again next sync
+                log.warning("Linking singles for %s: %s", artist, e)
+        db.set_meta("single_links", links)
+        if found:
+            self._step("Singles linked", f"{found:,} now on albums")
+
+    def _dz_albums(self, dz, key, name):
+        """The artist's albums and EPs on Deezer, oldest first, studio albums before live ones. Shares the artist page's cache."""
+        hit = db.cache_get("dz:" + key, 14)
+        if hit is None:
+            hit = dz.find_artist(name)
+            if not hit.get("missing"):
+                hit["albums"] = dz.albums(hit["id"])
+            db.cache_put("dz:" + key, hit)
+            db.commit()
+        albums = [a for a in hit.get("albums") or [] if a.get("type") in ("album", "ep")]
+        live = lambda a: "live" in (a.get("title") or "").lower()
+        return sorted(albums, key=lambda a: (live(a), a.get("type") != "album", a.get("date") or "9999"))
+
+    def _album_with(self, dz, albums, sk):
+        for a in albums:
+            tracks = db.cache_get(f"dzalb:{a['id']}", 30)
+            if tracks is None:
+                tracks = dz.album_tracks(a["id"])
+                db.cache_put(f"dzalb:{a['id']}", tracks)
+                db.commit()
+            if any(song_key(t.get("title")) == sk for t in tracks):
+                return {"id": a["id"], "title": a.get("title"), "year": (a.get("date") or "")[:4], "cover": a.get("cover"),
+                        "type": "ep" if a.get("type") == "ep" else "album"}
+        return None
+
     def _spotify(self):
         """Top, followed and saved artists for your taste, plus your Liked Songs for Liked, not owned."""
         sp = Spotify(config.SPOTIFY_CLIENT_ID, config.SPOTIFY_REFRESH_TOKEN, lambda t: config.save({"SPOTIFY_REFRESH_TOKEN": t}))
+        db.set_meta("spotify_can_play", sp.can_play())
         rows = sp.history()
         try:
             db.set_meta("spotify_liked", sp.liked_tracks())

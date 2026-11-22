@@ -86,6 +86,17 @@ def credit_keys(credit):
     return frozenset(keys)
 
 
+def owned_track(t, songs):
+    """The Plex track for a liked song, if you own it under any of its credited artists."""
+    sk = song_key(t.get("title"))
+    for credit in (t.get("artists") or []) + [t.get("album_artist") or ""]:
+        for ak in credit_keys(credit):
+            rk = songs.get(f"{ak}|{sk}")
+            if rk:
+                return rk
+    return None
+
+
 # ======================================================================= Plex
 
 class Plex:
@@ -346,7 +357,12 @@ def listenbrainz_top_artists(user, limit=1000, rng="all_time"):
 # which only this server holds.
 SPOTIFY_HELPER = "https://shaderf.github.io/recordhound-auth/"
 SPOTIFY_LOOPBACK = "http://127.0.0.1:8789/callback"   # the copy-and-paste way, from before the helper page
-SPOTIFY_SCOPES = "user-top-read user-library-read user-follow-read"
+SPOTIFY_SCOPES = "user-top-read user-library-read user-follow-read user-modify-playback-state user-read-playback-state"
+PLAY_SCOPES = {"user-modify-playback-state", "user-read-playback-state"}   # Play on Spotify; added after the first release
+
+
+class SpotifyNoDevice(APIError):
+    """No Spotify app is open anywhere to play on."""
 
 
 def spotify_redirect(setting=""):
@@ -401,6 +417,7 @@ class Spotify:
         d = r.json()
         if d.get("refresh_token") and d["refresh_token"] != refresh_token and on_new_refresh:
             on_new_refresh(d["refresh_token"])
+        self.scopes = set((d.get("scope") or "").split())
         self.s = requests.Session()
         self.s.headers.update({**UA, "Authorization": f"Bearer {d['access_token']}"})
 
@@ -450,6 +467,27 @@ class Spotify:
                     add(a["name"], plays=5, saved=True)
             url, params = d.get("next"), {}
         return list(out.values())
+
+    def can_play(self):
+        return PLAY_SCOPES <= self.scopes
+
+    def play(self, kind, spotify_id):
+        """Start a song (or an album from the top) on the device you're using, or on an open Spotify app.
+        Returns the device's name. Spotify only allows this for Premium accounts."""
+        devices = self._get("/me/player/devices").get("devices", [])
+        dev = (next((d for d in devices if d.get("is_active")), None) or next((d for d in devices if d.get("type") == "Computer"), None)
+               or (devices[0] if devices else None))
+        if not dev:
+            raise SpotifyNoDevice("No Spotify app is open")
+        body = {"uris": [f"spotify:track:{spotify_id}"]} if kind == "track" else {"context_uri": f"spotify:album:{spotify_id}"}
+        r = self.s.put("https://api.spotify.com/v1/me/player/play", params={"device_id": dev["id"]}, json=body, timeout=30)
+        if r.status_code == 404:
+            raise SpotifyNoDevice("That Spotify app stopped answering")
+        if r.status_code == 403:
+            raise APIError("Spotify only lets Premium accounts start playback")
+        if r.status_code >= 400:
+            raise APIError(f"Spotify couldn't start playback ({r.status_code})")
+        return dev.get("name") or "Spotify"
 
     def liked_tracks(self):
         """Your Liked Songs, newest first: title, every credited artist, and the album it's on."""

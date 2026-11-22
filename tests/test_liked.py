@@ -321,3 +321,99 @@ def test_hiding_one_song_keeps_the_rest_of_its_album(client):
     kid_a = next(a for a in d["albums"] if a["id"] == "al4")
     assert kid_a["songs"] == ["Everything In Its Right Place"] and d["hidden"] == 1
     assert [t["title"] for t in kid_a["tracks"]] == ["Everything In Its Right Place"] and kid_a["tracks"][0]["added_at"]
+
+
+class PlayResp(FakeResp):
+    pass
+
+
+def spotify_with(devices, play_status=204, scopes="user-modify-playback-state user-read-playback-state"):
+    sp = object.__new__(clients.Spotify)
+    sp.scopes = set(scopes.split())
+    sp._get = lambda url, **p: {"devices": devices}
+    sp.sent = []
+
+    class S:
+        def put(self, url, params=None, json=None, timeout=None):
+            sp.sent.append((params, json))
+            return FakeResp({}, play_status)
+    sp.s = S()
+    return sp
+
+
+def test_spotify_plays_on_the_active_device_or_an_open_app():
+    sp = spotify_with([{"id": "phone", "name": "Phone", "type": "Smartphone"}, {"id": "pc", "name": "Desk PC", "type": "Computer"}])
+    assert sp.play("track", "4uLU6hMCjMI75M1A2tKUQC") == "Desk PC"   # nothing playing: the computer's app
+    assert sp.sent[-1] == ({"device_id": "pc"}, {"uris": ["spotify:track:4uLU6hMCjMI75M1A2tKUQC"]})
+    sp = spotify_with([{"id": "pc", "name": "Desk PC", "type": "Computer"}, {"id": "tv", "name": "TV", "type": "TV", "is_active": True}])
+    assert sp.play("album", "1DFixLWuPkv3KT3TnV35m3") == "TV"
+    assert sp.sent[-1] == ({"device_id": "tv"}, {"context_uri": "spotify:album:1DFixLWuPkv3KT3TnV35m3"})
+    with pytest.raises(clients.SpotifyNoDevice):
+        spotify_with([]).play("track", "4uLU6hMCjMI75M1A2tKUQC")
+    with pytest.raises(APIError, match="Premium"):
+        spotify_with([{"id": "pc", "type": "Computer"}], 403).play("track", "4uLU6hMCjMI75M1A2tKUQC")
+    assert not spotify_with([], scopes="user-top-read").can_play()
+
+
+def test_play_route_explains_what_to_do(client, monkeypatch):
+    c, m = client
+    tid = "4uLU6hMCjMI75M1A2tKUQC"
+    monkeypatch.setattr(m, "_spotify_client", lambda: spotify_with([{"id": "pc", "name": "Desk PC", "type": "Computer"}]))
+    assert c.post("/api/spotify/play", json={"kind": "track", "id": tid}).json() == {"ok": True, "device": "Desk PC"}
+    monkeypatch.setattr(m, "_spotify_client", lambda: spotify_with([]))
+    assert c.post("/api/spotify/play", json={"kind": "track", "id": tid}).json()["reason"] == "no_device"
+    monkeypatch.setattr(m, "_spotify_client", lambda: spotify_with([], scopes="user-top-read"))
+    assert c.post("/api/spotify/play", json={"kind": "track", "id": tid}).json()["reason"] == "reconnect"
+    assert c.post("/api/spotify/play", json={"kind": "playlist", "id": tid}).status_code == 400
+    monkeypatch.setattr(config, "SPOTIFY_REFRESH_TOKEN", "")
+    assert c.post("/api/spotify/play", json={"kind": "track", "id": tid}).json()["reason"] == "not_connected"
+
+
+def test_liked_singles_are_linked_to_the_album_they_ended_up_on(client, monkeypatch):
+    c, m = client
+    from app.sync import Syncer
+    import test_pipeline as tp
+    calls = []
+
+    class FakeDeezer:
+        def find_artist(self, name):
+            calls.append(("artist", name))
+            return {"id": 9, "name": name}
+
+        def albums(self, artist_id):
+            return [{"id": 1, "title": "Whitney Whitney (Live)", "type": "album", "date": "2027-01-01"},
+                    {"id": 2, "title": "Debut", "type": "album", "date": "2026-09-01", "cover": "dzcover"},
+                    {"id": 3, "title": "Isabelle", "type": "single", "date": "2026-01-02"}]
+
+        def album_tracks(self, album_id):
+            calls.append(("tracks", album_id))
+            return [{"title": "Isabelle (Album Version)"}, {"title": "Another One"}] if album_id in (1, 2) else []
+    for k in ("dz:whitneywhitney", "dz:bellvie", "dzalb:1", "dzalb:2"):
+        db.conn().execute("DELETE FROM cache WHERE k=?", (k,))
+    db.commit()
+    db.set_meta("single_links", None)
+    s = Syncer(plex_factory=tp.FakePlex, deezer_factory=FakeDeezer, artist_factory=lambda: (tp.FakeLastFM(), "lf:", None), sources={"spotify_liked": LIKED})
+    s.link_singles()
+    links = db.get_meta("single_links")
+    assert links["al2Isabelle"]["album"]["title"] == "Debut"   # the studio album, not the live one
+    assert links["al1A Man Written by a Woman"]["album"] is None and "al3Feels So Far Away" in links
+    d = c.get("/api/liked").json()
+    debut = next(a for a in d["albums"] if a["id"] == "dz:2")
+    assert debut["title"] == "Debut" and debut["type"] == "album" and debut["linked"] and debut["cover"] == "dzcover"
+    assert debut["tracks"][0]["single"] == "Isabelle" and not any(a["id"] == "al2" for a in d["albums"])
+    sent = []
+
+    class FakeLidarr:
+        def __init__(self, *a):
+            pass
+
+        def add_album(self, artist, title, *a):
+            sent.append((artist, title))
+            return title
+    monkeypatch.setattr(m, "Lidarr", FakeLidarr)
+    c.post("/api/liked/lidarr", json={"id": "dz:2", "quality_id": 1, "metadata_id": 1, "root": "/m"})
+    assert sent == [("Whitney Whitney", "Debut")]   # Lidarr gets the album, not the single
+    n = len(calls)
+    s.link_singles()   # found ones aren't looked up again; ones without an album wait two weeks
+    assert len(calls) == n
+    db.set_meta("single_links", None)

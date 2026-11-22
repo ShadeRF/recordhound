@@ -659,7 +659,7 @@ function likedItems() {
   const q = likedQ.toLowerCase(), cmp = (LK_SORTS[LK.sort] || LK_SORTS.new)[1];
   if (LK.group === "none") {   // one row per song
     const songs = liked.albums.flatMap(a => (a.tracks || a.songs.map(t => ({ title: t, added_at: a.added_at }))).map(t => ({
-      ...t, a, album: a.title, title: t.title, artist: a.artist, year: a.year, count: a.songs.length })));
+      ...t, a, album: a.title, title: t.title, artist: a.artist, year: a.year, count: a.songs.length, single: t.single })));
     const hit = songs.filter(s => !q || [s.title, s.album, s.artist].some(x => (x || "").toLowerCase().includes(q)));
     const scmp = LK.sort === "album" ? (x, y) => bare(x.album).localeCompare(bare(y.album)) || byNew(x, y) : cmp;
     return { count: hit.length, of: songs.length, unit: "song", items: hit.sort(scmp).map(s => ({ s })) };
@@ -684,11 +684,23 @@ const likedDay = iso => { const d = iso ? new Date(iso) : null; return d && !isN
 // Opens that exact song or album in the Spotify app. The link itself is the web player's address, so Ctrl-click,
 // middle-click and "copy link" still work, and it's offered as a fallback when no app answers.
 const spotifyLink = (kind, id) => /^[A-Za-z0-9]{22}$/.test(id || "") ? `<a class="btn lk-sp" href="https://open.spotify.com/${kind}/${id}" data-app="spotify:${kind}:${id}" target="_blank" rel="noopener"
-  title="${kind === "track" ? "Plays this song in the Spotify app" : "Opens this release in the Spotify app"}">${kind === "track" ? `${ICON.play}Play on Spotify` : `<img class="svc" src="${fav("spotify.com")}" alt="">Open in Spotify`}</a>` : "";
-document.addEventListener("click", e => {
+  title="${kind === "track" ? "Plays this song in your Spotify app" : "Plays this release in your Spotify app"}">${kind === "track" ? `${ICON.play}Play on Spotify` : `${ICON.play}Play on Spotify`}</a>` : "";
+document.addEventListener("click", async e => {
   const a = e.target.closest && e.target.closest("a.lk-sp[data-app]");
   if (!a || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
+  const [, kind, id] = a.dataset.app.split(":");
+  if (lastStatus.spotify) {   // connected: start it playing in your Spotify app
+    let r = null;
+    try { r = await api("/api/spotify/play", { method: "POST", body: JSON.stringify({ kind, id }) }); } catch {}
+    if (r && r.ok) { toast(`Playing on ${r.device}`); return; }
+    if (r && r.reason === "reconnect") toast("Reconnect Spotify once so this button can start playback. Opening the app for now.", { label: "Reconnect", fn: () => openSetting("spotify") });
+    else if (r && r.reason === "no_device") toast("Opening Spotify. Press play there; while Spotify is open, this button starts songs by itself.");
+    else if (r && r.message) toast(`${r.message}. Opening the app instead.`);
+  }
+  openSpotifyApp(a);
+});
+function openSpotifyApp(a) {
   let left = false;
   const gone = () => { left = true; };
   window.addEventListener("blur", gone, { once: true });
@@ -698,13 +710,13 @@ document.addEventListener("click", e => {
     window.removeEventListener("blur", gone); document.removeEventListener("visibilitychange", gone);
     if (!left) toast("Didn't open? The Spotify app may not be installed here.", { label: "Open in web player", fn: () => window.open(a.href, "_blank", "noopener") });
   }, 2500);
-});
+}
 function likedSongRow(s) {
   const a = s.a, lid = lastStatus.lidarr, same = (s.album || "").toLowerCase() === (s.title || "").toLowerCase();
   return `<div class="lk-row" data-lk="${esc(a.id)}" ${s.id ? `data-song="${esc(s.id)}"` : ""} tabindex="0" title="Open ${esc(a.artist || "")}">
     ${a.cover ? `<img class="lk-cover" loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="lk-cover"></div>`}
     <div class="lk-main"><div class="lk-t">${esc(s.title || "")}</div>
-      <div class="lk-s"><span class="lk-a">${esc(a.artist || "")}</span>${same ? "" : ` · ${esc(s.album || "")}`}${a.year ? " · " + esc(a.year) : ""}${a.type === "single" ? " · Single" : ""}</div>
+      <div class="lk-s"><span class="lk-a">${esc(a.artist || "")}</span>${same ? "" : ` · ${esc(s.album || "")}`}${a.year ? " · " + esc(a.year) : ""}${a.type === "single" ? " · Single" : ""}${s.single ? ` <span class="lk-was" title="You liked the single “${esc(s.single)}”">· first out as a single</span>` : ""}</div>
       ${s.added_at ? `<div class="lk-when"><span class="lk-heart" aria-label="Liked">♥</span> ${esc(likedDay(s.added_at))}</div>` : ""}</div>
     <div class="lk-act">${spotifyLink("track", s.id)}${!lid ? "" : a.requested ? `<span class="pill on">✓ Sent to Lidarr</span>` : `<button class="btn primary" data-lk-lidarr>${ICON.plus}Add ${a.type === "single" ? "single" : "album"} to Lidarr</button>`}
       <button class="btn" data-lk-hide>Hide</button></div>
@@ -726,7 +738,7 @@ function likedRow(a) {
   return `<div class="lk-row" data-lk="${esc(a.id)}" tabindex="0" title="Open ${esc(a.artist || "")}">
     ${a.cover ? `<img class="lk-cover" loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="lk-cover"></div>`}
     <div class="lk-main"><div class="lk-t">${esc(a.title || "")}</div>
-      <div class="lk-s"><span class="lk-a">${esc(a.artist || "")}</span>${a.year ? " · " + esc(a.year) : ""}${a.type === "single" ? " · Single" : a.type === "compilation" ? " · Compilation" : ""}</div>
+      <div class="lk-s"><span class="lk-a">${esc(a.artist || "")}</span>${a.year ? " · " + esc(a.year) : ""}${a.type === "single" ? " · Single" : a.type === "compilation" ? " · Compilation" : a.type === "ep" ? " · EP" : ""}${a.linked ? ` <span class="lk-was">· you liked singles from it</span>` : ""}</div>
       <div class="lk-songs"><span class="lk-heart" aria-label="Liked">♥</span> ${a.songs.map(esc).join(" · ")}</div></div>
     <div class="lk-act">${spotifyLink("album", a.id)}${!lid ? "" : a.requested ? `<span class="pill on">✓ Sent to Lidarr</span>` : `<button class="btn primary" data-lk-lidarr>${ICON.plus}Add album to Lidarr</button>`}
       <button class="btn" data-lk-hide>Hide</button></div>
@@ -1104,6 +1116,7 @@ function renderSettings() {
       <h4>2 · Connect your account</h4>
       <p class="sub">Keeps your top artists, followed artists and saved albums up to date on every sync. Spotify only allows this through a personal developer app, which needs Spotify Premium and works for up to 5 people.</p>
       ${spConnected ? `<p>✓ Connected${spAge != null ? ` ${spAge} day${spAge === 1 ? "" : "s"} ago` : ""}. ${S.stats.history.spotify ? `${S.stats.history.spotify} artists.` : ""}
+          ${S.spotify_can_play === false ? `<b>Reconnect once so the Play on Spotify buttons can start songs in your Spotify app.</b>` : ""}
           ${spAge != null && spAge > 160 ? `<b>Spotify ends connections after six months, so reconnect soon.</b>` : ""}</p>
         <div class="filerow"><button class="btn" data-test="spotify">Test</button><button class="btn" id="spReconnect">Reconnect</button><button class="btn warn" id="spDisconnect">Disconnect</button><span class="tres" id="tres-spotify"></span></div>
         ${spPaste ? "" : `<p class="help"><button class="link accent" id="spPasteShow">Didn't come back after reconnecting? Paste the address instead</button></p>${spPasteBox}`}${spOld}`

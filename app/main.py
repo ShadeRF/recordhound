@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, auth, security, config, db, engine
-from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, album_key, artist_key, artist_source, credit_keys, song_key,
+from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, SpotifyNoDevice, album_key, owned_track, artist_key, artist_source, credit_keys, song_key,
                       listenbrainz_top_artists, parse_spotify_export, parse_youtube_music, spotify_auth_url, spotify_exchange, spotify_pasted, spotify_redirect,
                       SPOTIFY_HELPER, SPOTIFY_LOOPBACK)
 from .sync import Syncer, friendly_error
@@ -380,15 +380,15 @@ def make_playlist(body: PlaylistBody):
 LIKED_PLAYLIST = "Recordhound: Liked on Spotify"
 
 
-def _owned_rk(t, songs):
-    """The Plex track for a liked song, if you own it under any of its credited artists."""
-    sk = song_key(t.get("title"))
-    for credit in (t.get("artists") or []) + [t.get("album_artist") or ""]:
-        for ak in credit_keys(credit):
-            rk = songs.get(f"{ak}|{sk}")
-            if rk:
-                return rk
-    return None
+_owned_rk = owned_track
+
+
+def _release(t, links):
+    """(id, linked album or None) for a liked song: the album a single ended up on, when there is one."""
+    link = ((links or {}).get(t.get("id")) or {}).get("album")
+    if link:
+        return f"dz:{link['id']}", link
+    return t.get("album_id") or f"{t.get('album')}|{t.get('album_artist')}", None
 
 
 def _liked():
@@ -404,23 +404,26 @@ def liked():
     if not out["ready"]:
         return out
     hidden, added = set(db.get_meta("liked_hidden", [])), set(db.get_meta("liked_lidarr", []))
+    links = db.get_meta("single_links") or {}
     lidarr = set(db.get_meta("lidarr_keys", []))
     groups = {}
     for t in tracks:
         if _owned_rk(t, songs):
             out["owned"] += 1
             continue
-        gid = t.get("album_id") or f"{t.get('album')}|{t.get('album_artist')}"
-        if gid in hidden or t.get("id") in hidden:   # a whole release, or just this song
+        gid, link = _release(t, links)
+        if gid in hidden or t.get("id") in hidden or (link and t.get("album_id") in hidden):   # a whole release, or just this song
             out["hidden"] += 1
             continue
         artist = t.get("album_artist") or (t.get("artists") or [""])[0]
-        g = groups.setdefault(gid, {"id": gid, "title": t.get("album"), "artist": artist, "artist_key": artist_key(artist),
-                                    "cover": t.get("cover"), "year": t.get("year"), "type": t.get("album_type"),
+        g = groups.setdefault(gid, {"id": gid, "title": link["title"] if link else t.get("album"), "artist": artist, "artist_key": artist_key(artist),
+                                    "cover": t.get("cover") if not link else (link.get("cover") or t.get("cover")),
+                                    "year": (link or t).get("year"), "type": link["type"] if link else t.get("album_type"),
+                                    "linked": bool(link),
                                     "added_at": t.get("added_at"), "songs": [], "tracks": [], "requested": gid in added,
                                     "artist_in_lidarr": artist_key(artist) in lidarr})
         g["songs"].append(t.get("title"))
-        g["tracks"].append({"id": t.get("id"), "title": t.get("title"), "added_at": t.get("added_at")})
+        g["tracks"].append({"id": t.get("id"), "title": t.get("title"), "added_at": t.get("added_at"), "single": t.get("album") if link else None})
     out["total"] = len(tracks)
     out["albums"] = sorted(groups.values(), key=lambda g: g["added_at"] or "", reverse=True)   # newest like first
     return _fast(out)
@@ -455,12 +458,15 @@ class LikedLidarr(BaseModel):
 @app.post("/api/liked/lidarr")
 def liked_lidarr(body: LikedLidarr):
     tracks, _ = _liked()
-    t = next((t for t in tracks or [] if (t.get("album_id") or f"{t.get('album')}|{t.get('album_artist')}") == body.id), None)
+    links = db.get_meta("single_links") or {}
+    t = next((t for t in tracks or [] if _release(t, links)[0] == body.id), None)
     if not t:
         raise HTTPException(404, "That album isn't in your liked songs any more. Refresh the page.")
     artist = t.get("album_artist") or (t.get("artists") or [""])[0]
+    link = _release(t, links)[1]
     try:
-        title = Lidarr(config.LIDARR_URL, config.LIDARR_API_KEY).add_album(artist, t.get("album"), body.quality_id, body.metadata_id, body.root)
+        title = Lidarr(config.LIDARR_URL, config.LIDARR_API_KEY).add_album(artist, link["title"] if link else t.get("album"),
+                                                                            body.quality_id, body.metadata_id, body.root)
     except Exception as e:
         raise HTTPException(502, friendly_error(e))
     added = set(db.get_meta("liked_lidarr", []))
@@ -893,6 +899,42 @@ def lidarr_last():
 
 # ======================================================================= Spotify
 
+_sp = {"client": None, "at": 0, "token": None}
+
+
+def _spotify_client():
+    """A signed-in Spotify client, reused for 50 minutes (Spotify's access tokens last an hour)."""
+    if _sp["client"] and _sp["token"] == config.SPOTIFY_REFRESH_TOKEN and time.time() - _sp["at"] < 3000:
+        return _sp["client"]
+    sp = Spotify(config.SPOTIFY_CLIENT_ID, config.SPOTIFY_REFRESH_TOKEN, lambda t: config.save({"SPOTIFY_REFRESH_TOKEN": t}))
+    db.set_meta("spotify_can_play", sp.can_play())
+    _sp.update(client=sp, at=time.time(), token=config.SPOTIFY_REFRESH_TOKEN)
+    return sp
+
+
+class SpotifyPlay(BaseModel):
+    kind: str
+    id: str
+
+
+@app.post("/api/spotify/play")
+def spotify_play(body: SpotifyPlay):
+    """Start a song or album in your Spotify app. When that isn't possible, says why, and the page opens the app instead."""
+    if body.kind not in ("track", "album") or not (len(body.id) == 22 and body.id.isalnum()):
+        raise HTTPException(400, "That isn't a Spotify song or album")
+    if not config.SPOTIFY_REFRESH_TOKEN:
+        return {"ok": False, "reason": "not_connected"}
+    try:
+        sp = _spotify_client()
+        if not sp.can_play():
+            return {"ok": False, "reason": "reconnect"}
+        return {"ok": True, "device": sp.play(body.kind, body.id)}
+    except SpotifyNoDevice:
+        return {"ok": False, "reason": "no_device"}
+    except Exception as e:
+        return {"ok": False, "reason": "error", "message": friendly_error(e)}
+
+
 class SpotifyStart(BaseModel):
     back: str = ""   # this page's address, so the helper page knows where to send you back to
 
@@ -946,6 +988,7 @@ def _spotify_connect(code, attempt):
     token = spotify_exchange(config.SPOTIFY_CLIENT_ID, code, attempt["verifier"], attempt["redirect"])
     config.save({"SPOTIFY_REFRESH_TOKEN": token, "SPOTIFY_CONNECTED_AT": int(time.time())})
     db.set_meta("spotify_error", None)
+    db.set_meta("spotify_can_play", None)   # known again the next time it signs in
     return token
 
 
@@ -1050,7 +1093,8 @@ def get_settings():
                       "youtube_music_at": db.get_meta("youtube_music_at"),
                       "spotify_export_old": bool(db.get_meta("spotify_export_at") and not db.get_meta("spotify_export_v"))},
             "spotify_redirect": spotify_redirect(config.SPOTIFY_REDIRECT_URI), "spotify_helper": SPOTIFY_HELPER,
-            "spotify_loopback": SPOTIFY_LOOPBACK, "spotify_error": db.get_meta("spotify_error")}
+            "spotify_loopback": SPOTIFY_LOOPBACK, "spotify_error": db.get_meta("spotify_error"),
+            "spotify_can_play": db.get_meta("spotify_can_play")}
 
 
 def _resolve(values):
