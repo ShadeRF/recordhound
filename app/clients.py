@@ -62,6 +62,16 @@ def album_key(title):
     return re.sub(r"[^a-z0-9]+", "", cut) or re.sub(r"[^a-z0-9]+", "", s)
 
 
+# Release titles that aren't a studio album: "Synthetic (Remixes)", "The Midnight Remixed", "Heroes (& Instrumentals)",
+# "Siberia (Acoustic)", "Live at Wembley". "Live Through This" stays an album: live needs brackets, a dash, or at/in/from.
+_SPECIAL_RELEASE = re.compile(r"\b(remix(es|ed)?|instrumentals?|acoustic|karaoke|demos?|a ?cappella|unplugged|reimagined)\b"
+                              r"|[(\[\-–]\s*live\b|\blive (at|in|from)\b", re.I)
+
+
+def special_release(title):
+    return bool(_SPECIAL_RELEASE.search(title or ""))
+
+
 @functools.lru_cache(maxsize=200_000)
 def song_key(title):
     """One key per song however it's labelled: "Song - Remastered 2011", "Song (Radio Edit)" and "Song feat. X"
@@ -72,6 +82,21 @@ def song_key(title):
     cut = re.sub(r"\s(?:feat|ft|featuring)\.?\s.*$", "", cut)
     cut = cut.replace("&", " and ")
     return re.sub(r"[^a-z0-9]+", "", cut) or re.sub(r"[^a-z0-9]+", "", s) or (title or "").strip().lower()
+
+
+@functools.lru_cache(maxsize=200_000)
+def song_keys(title):
+    """Every way to read a title. Brackets can be a version label ("Song (Live)" is "Song") or part of the name
+    ("About Nothing (For the Love of Destiny)" is "About Nothing for the Love of Destiny"), so both readings count."""
+    s = unicodedata.normalize("NFKD", (title or "").translate(_PLAIN)).encode("ascii", "ignore").decode().lower()
+    whole = re.sub(r"\s+-\s+.*$", "", s)
+    whole = re.sub(r"[\(\[]\s*(?:feat|ft|featuring|with)\.?\s[^\)\]]*[\)\]]", "", whole)   # "(feat. X)" is never part of the name
+    whole = re.sub(r"\s(?:feat|ft|featuring)\.?\s.*$", "", whole).replace("&", " and ")
+    return frozenset(k for k in (song_key(title), re.sub(r"[^a-z0-9]+", "", whole)) if k)
+
+
+def same_song(a, b):
+    return bool(song_keys(a) & song_keys(b))
 
 
 _CREDIT_SPLIT = re.compile(r"\s*(?:,|;|/|\s&\s|\sx\s|\s(?:feat|ft)\.?\s|\sfeaturing\s|\swith\s|\sand\s)\s*", re.I)
@@ -86,12 +111,32 @@ def credit_keys(credit):
     return frozenset(keys)
 
 
+# Album artists that mean "lots of artists": Various Artists, and soundtracks or cast albums credited to no one in
+# particular. A score credited to its composer (John Williams, Hans Zimmer) is a normal artist and isn't matched.
+_COMPILATION = re.compile(r"^(various(\s+artists)?|v\.?\s?a\.?|o\.?s\.?t\.?|sound\s*tracks?|(original\s+|(motion\s+picture|television|tv|film|"
+                          r"movie|video\s+game|game|broadway|london)\s+)+(sound\s*tracks?|scores?|cast(\s+recording|\s+album)?))$", re.I)
+
+
+def is_compilation(album_artist):
+    return bool(_COMPILATION.match((album_artist or "").strip()))
+
+
+def lead_artist(credit):
+    """The first name in a track credit: "Calvin Harris, Dua Lipa" is Calvin Harris."""
+    parts = [p.strip() for p in _CREDIT_SPLIT.split(credit or "") if p.strip()]
+    return parts[0] if parts else None
+
+
 def owned_track(t, songs):
     """The Plex track for a liked song, if you own it under any of its credited artists."""
-    sk = song_key(t.get("title"))
-    for credit in (t.get("artists") or []) + [t.get("album_artist") or ""]:
-        for ak in credit_keys(credit):
-            rk = songs.get(f"{ak}|{sk}")
+    for sk in song_keys(t.get("title")):
+        for credit in (t.get("artists") or []) + [t.get("album_artist") or ""]:
+            for ak in credit_keys(credit):
+                rk = songs.get(f"{ak}|{sk}")
+                if rk:
+                    return rk
+        if t.get("album"):   # on a soundtrack or compilation whose tracks don't name their artist
+            rk = songs.get(f"album:{album_key(t['album'])}|{sk}")
             if rk:
                 return rk
     return None
@@ -149,6 +194,7 @@ class Plex:
         {"artist key|song key": track rating key} for every track, to tell which liked songs you own."""
         out = {}
         self.songs = {}
+        self.comp_albums, self.comp_plays = [], {}   # soundtracks and Various Artists albums; plays of the artists on them
         for sec in self.sections():
             sid = sec["key"]
             step(f"Reading Plex: {sec.get('title')}")
@@ -183,9 +229,21 @@ class Plex:
                     al["plays"] += t.get("viewCount") or 0
                 if t.get("userRating"):
                     row["ratings"].append(t["userRating"])
-                sk = song_key(t.get("title"))
-                for ak in credit_keys(row["name"]) | (credit_keys(t["originalTitle"]) if t.get("originalTitle") else frozenset()):
-                    self.songs.setdefault(f"{ak}|{sk}", t.get("ratingKey"))
+                for sk in song_keys(t.get("title")):
+                    for ak in credit_keys(row["name"]) | (credit_keys(t["originalTitle"]) if t.get("originalTitle") else frozenset()):
+                        self.songs.setdefault(f"{ak}|{sk}", t.get("ratingKey"))
+                    if al:   # also by album, for compilations whose tracks don't say who they're by
+                        self.songs.setdefault(f"album:{album_key(al['title'])}|{sk}", t.get("ratingKey"))
+                if row.get("comp") is None:
+                    row["comp"] = is_compilation(row["name"])
+                lead = lead_artist(t.get("originalTitle")) if row["comp"] else None
+                if lead and not is_compilation(lead):   # a song on a soundtrack counts for the artist who sang it
+                    lk = artist_key(lead)
+                    cp = self.comp_plays.setdefault(lk, {"key": lk, "name": lead, "plays": 0})
+                    cp["plays"] += t.get("viewCount") or 0
+                    if al is not None:
+                        al.setdefault("by", {})
+                        al["by"][lk] = al["by"].get(lk, 0) + 1
                 lv = t.get("lastViewedAt")
                 if lv and (not row["last_played"] or lv > row["last_played"]):
                     row["last_played"] = lv
@@ -193,8 +251,14 @@ class Plex:
                     step(f"Reading Plex: {sec.get('title')}", f"{n:,} tracks")
             for row in by_rk.values():
                 k = artist_key(row["name"])
-                if not k or k in ("variousartists", "various"):
+                if row.get("comp") or is_compilation(row["name"]) or not k:   # not an artist: keep its albums, by who's on them
+                    for a in row["album_rows"]:
+                        by = a.pop("by", {})
+                        self.comp_albums.append({**a, "artist": row["name"], "artist_key": "", "compilation": True,
+                                                 "artists": [x for x, _ in sorted(by.items(), key=lambda kv: -kv[1])[:8]]})
                     continue
+                for a in row["album_rows"]:
+                    a.pop("by", None)
                 rs = row.pop("ratings")
                 if not row["rating"] and rs:
                     row["rating"] = round(sum(rs) / len(rs), 1)
@@ -471,12 +535,13 @@ class Spotify:
     def can_play(self):
         return PLAY_SCOPES <= self.scopes
 
-    def play(self, kind, spotify_id):
-        """Start a song (or an album from the top) on the device you're using, or on an open Spotify app.
+    def play(self, kind, spotify_id, on="computer"):
+        """Start a song (or an album from the top) in your Spotify app: on a computer, or on a phone when you're using
+        Recordhound on one. Never a speaker, receiver, TV or cast device, even if that's what is playing right now.
         Returns the device's name. Spotify only allows this for Premium accounts."""
-        devices = self._get("/me/player/devices").get("devices", [])
-        dev = (next((d for d in devices if d.get("is_active")), None) or next((d for d in devices if d.get("type") == "Computer"), None)
-               or (devices[0] if devices else None))
+        want = "Smartphone" if on == "phone" else "Computer"
+        mine = [d for d in self._get("/me/player/devices").get("devices", []) if d.get("type") == want and not d.get("is_restricted")]
+        dev = next((d for d in mine if d.get("is_active")), None) or (mine[0] if mine else None)
         if not dev:
             raise SpotifyNoDevice("No Spotify app is open")
         body = {"uris": [f"spotify:track:{spotify_id}"]} if kind == "track" else {"context_uri": f"spotify:album:{spotify_id}"}
@@ -495,11 +560,12 @@ class Spotify:
             items = self._get("/search", q=f"isrc:{isrc}", type="track", limit=1).get("tracks", {}).get("items", [])
             if items:
                 return items[0]["id"]
-        want_t, want_a = (song_key if kind == "track" else album_key)(title), credit_keys(artist)
+        want_a = credit_keys(artist)
+        same = (lambda n: same_song(n, title)) if kind == "track" else (lambda n: album_key(n) == album_key(title))
         d = self._get("/search", q=f'{"track" if kind == "track" else "album"}:"{title}" artist:"{artist}"', type=kind, limit=10)
         for it in d.get(kind + "s", {}).get("items", []):
             names = {k for a in it.get("artists", []) for k in credit_keys(a.get("name"))}
-            if names & want_a and (song_key if kind == "track" else album_key)(it.get("name")) == want_t:
+            if names & want_a and same(it.get("name")):
                 return it["id"]
         return None
 
@@ -982,7 +1048,7 @@ class Lidarr:
         by_artist = lambda found: [al for al in found if artist_key((al.get("artist") or {}).get("artistName")) in want_a]
         cands = by_artist(self._get("/album/lookup", term=f"{artist} {title}")) or by_artist(self._get("/album/lookup", term=title))
         al = (next((x for x in cands if album_key(x.get("title")) == album_key(title)), None)
-              or next((x for x in cands if song_key(x.get("title")) == want_t), None))
+              or next((x for x in cands if same_song(x.get("title"), title)), None))
         if not al:
             raise APIError(f"Lidarr couldn't find {title} by {artist} on MusicBrainz")
         if al.get("id"):   # Lidarr already knows this album

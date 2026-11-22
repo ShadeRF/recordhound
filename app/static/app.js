@@ -27,7 +27,7 @@ const fmtDate = d => { try { return new Date(d + "T12:00").toLocaleDateString([]
 const initials = n => esc((n || "?").replace(/^the\s+/i, "").split(/\s+/).slice(0, 2).map(w => w[0]).join("").toUpperCase());
 const enc = s => encodeURIComponent(s ?? "").replace(/['()*!]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
 const artURL = r => `/api/art/${enc(r.key)}?name=${enc(r.name)}`;
-const SRC = { lastfm: ["last.fm", "Last.fm"], listenbrainz: ["listenbrainz.org", "ListenBrainz"], spotify: ["spotify.com", "Spotify"], spotify_export: ["spotify.com", "Spotify history"], youtube_music: ["music.youtube.com", "YouTube Music"] };
+const SRC = { lastfm: ["last.fm", "Last.fm"], listenbrainz: ["listenbrainz.org", "ListenBrainz"], spotify: ["spotify.com", "Spotify"], spotify_export: ["spotify.com", "Spotify history"], plex_comp: ["plex.tv", "Soundtracks & compilations in Plex"], youtube_music: ["music.youtube.com", "YouTube Music"] };
 
 const ICON = {
   hide: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>`,
@@ -240,14 +240,21 @@ async function toggleSaved(key) {
 // ------------------------------------------------------------------ previews
 const audio = $("audio"); let playing = null;
 // Full songs in your Spotify app when connected; the 30-second preview otherwise, or when Spotify can't.
-const WHY_PREVIEW = { not_found: "Not on Spotify", no_device: "No Spotify app is open", reconnect: "Reconnect Spotify to play full songs" };
+const WHY_PREVIEW = { not_found: "Not on Spotify", no_device: "Spotify isn't open", reconnect: "Reconnect Spotify to play full songs" };
+const playOn = () => matchMedia("(pointer: coarse)").matches ? "phone" : "computer";   // only ever your own kind of device
 async function viaSpotify(kind, title, artist, isrc) {
   if (!lastStatus.spotify_play) return false;
   let r = null;
-  try { r = await api("/api/spotify/play-match", { method: "POST", body: JSON.stringify({ kind, title, artist, isrc: isrc || null }) }); } catch {}
+  try { r = await api("/api/spotify/play-match", { method: "POST", body: JSON.stringify({ kind, title, artist, isrc: isrc || null, on: playOn() }) }); } catch {}
   if (r && r.ok) {
     if (!audio.paused) audio.pause();
     toast(`Playing ${title} on ${r.device}`);
+    return true;
+  }
+  if (r && r.reason === "no_device" && r.id) {   // no Spotify app open here: open it on this song (or the web player)
+    if (!audio.paused) audio.pause();
+    toast("Opening Spotify. Press play there; while it's open, play buttons start songs by themselves.");
+    openSpotifyApp(`spotify:${kind}:${r.id}`, `https://open.spotify.com/${kind}/${r.id}`);
     return true;
   }
   const why = (r && (WHY_PREVIEW[r.reason] || r.message)) || "Spotify didn't answer";
@@ -437,13 +444,20 @@ function showAlbum(i) {
 }
 const mmss = s => s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "";
 async function loadAlbumTracks(r, a, i) {
-  let d; try { d = await api(`/api/album/${encodeURIComponent(a.id)}/tracks?name=${encodeURIComponent(r.name)}`); }
+  let d; try { d = await api(`/api/album/${encodeURIComponent(a.id)}/tracks?name=${encodeURIComponent(r.name)}&album=${encodeURIComponent(a.title)}`); }
   catch (e) { if ($("albTracks")) $("albTracks").innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
   const box = $("albBox"); if (!box || box.hidden || box.dataset.i !== String(i) || current !== r) return;   // you've opened something else since
   albumTracks = d.tracks.map((t, n) => ({ ...t, i: n, album: a.id, cover: a.cover, by: t.artist || r.name }));
+  if (d.all_owned && !a.owned) {   // you have every track, filed under other album names: it counts as owned
+    a.owned = true;
+    const tile = document.querySelector(`#drawer button[data-alb="${i}"]`);
+    if (tile && !tile.querySelector(".own-b")) { tile.classList.add("own"); tile.insertAdjacentHTML("afterbegin", `<span class="own-b">OWNED</span>`); }
+    box.querySelector("[data-alb-lidarr]")?.remove();
+    const sm = box.querySelector(".albinfo small"); if (sm && !sm.textContent.includes("library")) sm.textContent += " · in your library";
+  }
   const discs = new Set(d.tracks.map(t => t.disc)).size > 1, owned = d.tracks.filter(t => t.owned).length;
   let disc = null;
-  $("albTracks").innerHTML = (d.checked_plex && owned && !a.owned ? `<p class="muted atr-note">You own ${owned} of these ${d.tracks.length} tracks.</p>` : "") +
+  $("albTracks").innerHTML = (d.checked_plex && owned ? `<p class="muted atr-note">${d.all_owned ? `You have all ${d.tracks.length} tracks in Plex, so this counts as owned.` : `You own ${owned} of these ${d.tracks.length} tracks.`}</p>` : "") +
     albumTracks.map(t => {
       const head = discs && t.disc !== disc ? `<div class="adisc">Disc ${disc = t.disc}</div>` : "";
       return `${head}<div class="atrk" data-alb="${esc(a.id)}" data-ai="${t.i}">
@@ -620,12 +634,19 @@ async function loadGaps() {
   listShell("Albums you're missing", "", `<div class="grid">${skeleton(8)}</div>`);
   const my = ++listSeq; let d; try { d = await api("/api/gaps"); } catch (e) { if (my === listSeq) listShell("Albums you're missing", esc(e.message), ""); return; }
   if (my !== listSeq) return;   // you've moved on to another page since
-  listShell("Albums you're missing", "Studio albums from artists you already collect. Most popular first.",
+  const what = ["studio albums", d.eps ? "EPs" : "", d.special ? "remix, live and acoustic releases" : ""].filter(Boolean);
+  const opts = `<div class="lib-tools gap-opts"><label class="inline"><input type="checkbox" data-gap-opt="GAPS_EPS" ${d.eps ? "checked" : ""}> EPs</label>
+    <label class="inline"><input type="checkbox" data-gap-opt="GAPS_SPECIAL" ${d.special ? "checked" : ""}> Remix, instrumental, live and acoustic releases</label></div>`;
+  listShell("Albums you're missing", `${what.length > 1 ? what.slice(0, -1).join(", ") + " and " + what.at(-1) : "Studio albums"} from artists you already collect, most popular first.`.replace(/^./, c => c.toUpperCase()),
     d.groups.length ? d.groups.map(g => `<div class="gap"><div class="gap-head" data-open-artist="${esc(g.key)}">
         <span class="gap-ph" style="background-image:url('${esc(g.picture || "")}')"></span>
         <div><h3>${esc(g.name)}</h3><div class="muted">You have ${g.owned} of ${g.total}</div><div class="meter"><i style="width:${Math.round(g.owned / g.total * 100)}%"></i></div></div></div>
         <div class="hscroll" data-list>${g.albums.map(a => albumCard(a)).join("")}</div></div>`).join("")
-      : `<div class="empty">${d.at ? "Nothing missing. Your collection is complete." : "This fills in after your next full sync."}</div>`);
+      : `<div class="empty">${d.at ? "Nothing missing. Your collection is complete." : "This fills in after your next full sync."}</div>`, opts);
+  document.querySelectorAll("[data-gap-opt]").forEach(cb => cb.onchange = async () => {
+    try { await api("/api/settings", { method: "PUT", body: JSON.stringify({ [cb.dataset.gapOpt]: cb.checked }) }); } catch (e) { toast(e.message); cb.checked = !cb.checked; return; }
+    loadGaps();
+  });
 }
 async function loadReleases() {
   listShell("New from artists you love", "", `<div class="grid">${skeleton(8)}</div>`);
@@ -716,23 +737,23 @@ document.addEventListener("click", async e => {
   const [, kind, id] = a.dataset.app.split(":");
   if (lastStatus.spotify) {   // connected: start it playing in your Spotify app
     let r = null;
-    try { r = await api("/api/spotify/play", { method: "POST", body: JSON.stringify({ kind, id }) }); } catch {}
+    try { r = await api("/api/spotify/play", { method: "POST", body: JSON.stringify({ kind, id, on: playOn() }) }); } catch {}
     if (r && r.ok) { toast(`Playing on ${r.device}`); return; }
     if (r && r.reason === "reconnect") toast("Reconnect Spotify once so this button can start playback. Opening the app for now.", { label: "Reconnect", fn: () => openSetting("spotify") });
     else if (r && r.reason === "no_device") toast("Opening Spotify. Press play there; while Spotify is open, this button starts songs by itself.");
     else if (r && r.message) toast(`${r.message}. Opening the app instead.`);
   }
-  openSpotifyApp(a);
+  openSpotifyApp(a.dataset.app, a.href);
 });
-function openSpotifyApp(a) {
+function openSpotifyApp(app, web) {
   let left = false;
   const gone = () => { left = true; };
   window.addEventListener("blur", gone, { once: true });
   document.addEventListener("visibilitychange", gone, { once: true });
-  location.href = a.dataset.app;   // the installed app takes over (the browser may ask first)
+  location.href = app;   // the installed app takes over (the browser may ask first)
   setTimeout(() => {
     window.removeEventListener("blur", gone); document.removeEventListener("visibilitychange", gone);
-    if (!left) toast("Didn't open? The Spotify app may not be installed here.", { label: "Open in web player", fn: () => window.open(a.href, "_blank", "noopener") });
+    if (!left) toast("Didn't open? The Spotify app may not be installed here.", { label: "Open in web player", fn: () => window.open(web, "_blank", "noopener") });
   }, 2500);
 }
 function likedSongRow(s) {
@@ -1168,6 +1189,10 @@ function renderSettings() {
       ${rangeField("OWNED_WEIGHT", "Artists you own but rarely play", 0, 1, 0.05, "How much your collection shapes your taste even when you haven't played it. Keep it high if your library is curated.", pct)}
       ${rangeField("RECENT_WEIGHT", "What you've played lately", 0, 1.5, 0.1, "Extra pull for artists you've played in the last six months (Plex, plus ListenBrainz if connected). Raise it to follow what you're into now; 0 treats all listening the same.", pct)}
       ${rangeField("MIN_PLAYS", "Plays before outside listening counts", 1, 20, 1, "Artists you've played fewer times than this on Spotify, YouTube Music, ListenBrainz or Last.fm don't shape your picks or show up under You Stream, so checking someone out once doesn't count. Spotify history files count listening time, so ten quick skips add up to less than one play each. Plays in Plex always count.")}
+      <h4>Soundtracks and compilations</h4>
+      <p class="sub">Albums credited to Various Artists, Original Soundtrack and the like. Scores credited to a composer, like John Williams, count as that composer's albums either way.</p>
+      <label class="inline" style="margin:4px 0"><input type="checkbox" data-k="COMP_TASTE" ${val("COMP_TASTE") ? "checked" : ""}> Plays of their songs count toward the artists who sang them ${srcTag("COMP_TASTE")}</label>
+      <label class="inline" style="margin:4px 0 8px"><input type="checkbox" data-k="COMP_LIBRARY" ${val("COMP_LIBRARY") ? "checked" : ""}> Your Library includes the ones you haven't played ${srcTag("COMP_LIBRARY")}</label>
       <h4>Don't learn from</h4>
       <p class="sub">These stay in your library but stop shaping your picks.</p>
       <div class="field"><label>Plex libraries</label><div id="noseedLibs" class="chips pick"><span class="muted">Sync once to list your libraries.</span></div></div>

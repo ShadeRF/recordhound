@@ -10,7 +10,7 @@ from datetime import date, timedelta
 import requests
 
 from . import config, db, engine
-from .clients import (APIError, Deezer, LastFM, Lidarr, OpenArtists, Plex, Spotify, album_key, artist_key, artist_source, forget_lastfm_check, owned_track, song_key,
+from .clients import (APIError, Deezer, LastFM, Lidarr, OpenArtists, Plex, Spotify, album_key, artist_key, artist_source, forget_lastfm_check, owned_track, same_song, special_release,
                       listenbrainz_top_artists)
 
 log = logging.getLogger("recordhound")
@@ -115,6 +115,9 @@ class Syncer:
         plex = self.plex_factory()
         rows = plex.artists(self._step)
         albums = [{**a, "artist_key": r["key"], "artist": r["name"]} for r in rows for a in r.pop("album_rows", None) or []]
+        albums += getattr(plex, "comp_albums", None) or []   # soundtracks and Various Artists albums
+        if getattr(plex, "comp_plays", None) is not None:   # plays of songs on them count for the artists who sang them
+            db.replace_history("plex_comp", [r for r in plex.comp_plays.values() if r["plays"]])
         db.replace_library(rows)
         db.set_meta("plex_albums", albums)
         if getattr(plex, "songs", None) is not None:   # every track, to tell which liked songs you own
@@ -187,7 +190,7 @@ class Syncer:
             try:
                 albums = self._dz_albums(dz, key, artist)
                 for t in tracks:
-                    hit = self._album_with(dz, albums, song_key(t.get("title")))
+                    hit = self._album_with(dz, albums, t.get("title"))
                     links[t["id"]] = {"at": int(now), "album": hit}
                     found += bool(hit)
             except Exception as e:   # Deezer hiccup: try these again next sync
@@ -209,14 +212,14 @@ class Syncer:
         live = lambda a: "live" in (a.get("title") or "").lower()
         return sorted(albums, key=lambda a: (live(a), a.get("type") != "album", a.get("date") or "9999"))
 
-    def _album_with(self, dz, albums, sk):
+    def _album_with(self, dz, albums, title):
         for a in albums:
             tracks = db.cache_get(f"dzalb:{a['id']}", 30)
             if tracks is None:
                 tracks = dz.album_tracks(a["id"])
                 db.cache_put(f"dzalb:{a['id']}", tracks)
                 db.commit()
-            if any(song_key(t.get("title")) == sk for t in tracks):
+            if any(same_song(t.get("title"), title) for t in tracks):
                 return {"id": a["id"], "title": a.get("title"), "year": (a.get("date") or "")[:4], "cover": a.get("cover"),
                         "type": "ep" if a.get("type") == "ep" else "album"}
         return None
@@ -297,6 +300,9 @@ class Syncer:
         noseed = set(db.noseed()) | {r["key"] for r in library
                                       if (sections.get(str(r.get("section")), {}).get("title") or "").lower() in skip_libs}
         history, feedback = db.history(), db.feedback()
+        if not config.COMP_TASTE:   # soundtrack and compilation plays left out of your taste
+            history = {k: {**h, "sources": {s: v for s, v in h["sources"].items() if s != "plex_comp"}} for k, h in history.items()}
+            history = {k: h for k, h in history.items() if h["sources"]}
         seeds = engine.build_seeds(library, history, feedback, config.OWNED_WEIGHT, noseed,
                                    recent=db.get_meta("recent_listens", {}), recent_weight=config.RECENT_WEIGHT,
                                    min_plays=config.MIN_PLAYS)
@@ -427,12 +433,12 @@ class Syncer:
             if (al_new := [x for x in albums if (x.get("date") or "") >= recent and not x["owned"]]):
                 releases += al_new
             if k in lib and not a.get("missing"):
-                missing = [x for x in albums if not x.get("mb_only") and not x["owned"] and x.get("type") == "album" and (x.get("date") or "9") <= today.isoformat()]
+                missing = [{**x, "special": special_release(x["title"])} for x in albums
+                           if not x.get("mb_only") and not x["owned"] and (x.get("date") or "9") <= today.isoformat()]
                 n_own = len([x for x in albums if x["owned"]])
-                if missing and n_own:
+                if missing and n_own:   # EPs and special releases are kept, marked; the page filters by your settings
                     missing.sort(key=lambda x: -(x.get("fans") or 0))
-                    gaps.append({"key": k, "name": seeds[k]["name"], "picture": a.get("thumb"), "owned": n_own,
-                                 "total": n_own + len(missing), "albums": missing[:12]})
+                    gaps.append({"key": k, "name": seeds[k]["name"], "picture": a.get("thumb"), "owned": n_own, "albums": missing[:30]})
         releases.sort(key=lambda x: x.get("date") or "", reverse=True)
         if self.sources is None:
             self._cover_check([x for x in releases if x.get("mb_only")])

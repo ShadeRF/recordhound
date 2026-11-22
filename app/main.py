@@ -8,6 +8,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
+import re
+
 import requests
 from contextlib import asynccontextmanager
 
@@ -18,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, auth, security, config, db, engine
-from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, SpotifyNoDevice, album_key, owned_track, artist_key, artist_source, credit_keys, song_key,
+from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, SpotifyNoDevice, album_key, owned_track, artist_key, artist_source, credit_keys, song_key, song_keys,
                       listenbrainz_top_artists, parse_spotify_export, parse_youtube_music, spotify_auth_url, spotify_exchange, spotify_pasted, spotify_redirect,
                       SPOTIFY_HELPER, SPOTIFY_LOOPBACK)
 from .sync import Syncer, friendly_error
@@ -281,7 +283,7 @@ def home():
     if stream:
         rows.append({"id": "stream", "title": "You stream these, but don't own them", "subtitle": "From your listening outside Plex",
                      "items": stream[:24], "see_all": {"view": "stream"}})
-    gaps = (db.get_meta("gaps") or {}).get("groups", [])
+    gaps = _gap_groups()
     gap_albums = []
     for rnd in range(3):
         for g in gaps:
@@ -313,7 +315,7 @@ def home():
 def _unplayed():
     noseed = db.noseed()
     return [{**a, "cover": f"/api/cover/{a['rk']}", "date": str(a["year"]) if a.get("year") else ""}
-            for a in db.get_meta("unplayed", []) if a.get("artist_key") not in noseed]
+            for a in db.get_meta("unplayed", []) if a.get("artist_key") not in noseed and (config.COMP_LIBRARY or not a.get("compilation"))]
 
 
 @app.get("/api/library")
@@ -497,10 +499,21 @@ def liked_playlist():
     return {"ok": True, "title": LIKED_PLAYLIST, "songs": len(rks)}
 
 
+def _gap_groups():
+    """Albums you're missing, by artist, as your settings want them: studio albums, plus EPs and remix, instrumental,
+    live or acoustic releases if you've asked for those. Older syncs only kept studio albums, which still works."""
+    out = []
+    for g in (db.get_meta("gaps") or {}).get("groups", []):
+        keep = [a for a in g["albums"] if (a.get("type") != "ep" or config.GAPS_EPS) and (not a.get("special") or config.GAPS_SPECIAL)]
+        if keep:
+            out.append({**g, "albums": keep[:12], "total": g["owned"] + len(keep)})
+    return out
+
+
 @app.get("/api/gaps")
 def gaps():
     g = db.get_meta("gaps") or {}
-    return _fast({"at": g.get("at"), "groups": g.get("groups", [])})
+    return _fast({"at": g.get("at"), "groups": _gap_groups(), "eps": config.GAPS_EPS, "special": config.GAPS_SPECIAL})
 
 
 @app.get("/api/releases")
@@ -539,8 +552,34 @@ def _deezer(key, name, max_age=14):
     return hit
 
 
+# "Song (Instrumental)", "Song - Live at Wembley", "Album (Remixes)": a different recording from the one you own, even
+# though the forgiving song match would call it the same song.
+_VERSION = re.compile(r"[(\[\-–].*\b(instrumentals?|remix(es)?|live|acoustic|karaoke|demos?|a ?cappella)\b", re.I)
+
+
+def _tracks_owned(tracks, artist, album_title, songs):
+    """Which of an album's tracks you own in Plex."""
+    if not songs:
+        return [False] * len(tracks)
+    special = bool(_VERSION.search(album_title or ""))
+    out = []
+    for t in tracks:
+        if special or _VERSION.search(t.get("title") or ""):
+            out.append(False)
+            continue
+        out.append(any(f"{ak}|{sk}" in songs for sk in song_keys(t.get("title"))
+                       for ak in credit_keys(artist) | credit_keys(t.get("artist") or ""))
+                   or any(f"album:{album_key(album_title)}|{sk}" in songs for sk in song_keys(t.get("title"))))
+    return out
+
+
+def _owns_every_track(tracks, artist, album_title, songs):
+    have = _tracks_owned(tracks or [], artist, album_title, songs)
+    return len(have) >= 2 and all(have)
+
+
 @app.get("/api/album/{album_id}/tracks")
-def album_tracks(album_id: int, name: str = ""):
+def album_tracks(album_id: int, name: str = "", album: str = ""):
     """A Deezer album's tracks, each marked if you own it in Plex or liked it on Spotify."""
     tracks = db.cache_get(f"dzalb:{album_id}", 30)
     if tracks is None:
@@ -551,13 +590,13 @@ def album_tracks(album_id: int, name: str = ""):
         db.cache_put(f"dzalb:{album_id}", tracks)
         db.commit()
     songs = db.get_meta("plex_songs")
-    liked = {f"{ak}|{song_key(t.get('title'))}" for t in db.get_meta("spotify_liked") or []
+    liked = {f"{ak}|{sk}" for t in db.get_meta("spotify_liked") or [] for sk in song_keys(t.get("title"))
              for credit in t.get("artists") or [] for ak in credit_keys(credit)}
     out = []
-    for t in tracks:
-        keys = {f"{ak}|{song_key(t.get('title'))}" for ak in credit_keys(name) | credit_keys(t.get("artist") or "")}
-        out.append({**t, "owned": bool(songs and any(k in songs for k in keys)), "liked": bool(keys & liked)})
-    return {"tracks": out, "checked_plex": songs is not None}
+    for t, have in zip(tracks, _tracks_owned(tracks, name, album, songs)):
+        keys = {f"{ak}|{sk}" for sk in song_keys(t.get("title")) for ak in credit_keys(name) | credit_keys(t.get("artist") or "")}
+        out.append({**t, "owned": have, "liked": bool(keys & liked)})
+    return {"tracks": out, "checked_plex": songs is not None, "all_owned": len(out) >= 2 and all(t["owned"] for t in out)}
 
 
 @app.get("/api/art/{key}")
@@ -622,7 +661,10 @@ def artist(key: str, name: str = ""):
         if ak in seen or a.get("type") not in ("album", "ep"):
             continue
         seen.add(ak)
-        albums.append({**a, "owned": ak in owned_albums, "plex_rk": plex_rk.get(ak)})
+        owned = ak in owned_albums
+        if not owned and lib:   # every track is in Plex, just filed under other album names
+            owned = _owns_every_track(db.cache_get(f"dzalb:{a['id']}", 30), nm, a["title"], db.get_meta("plex_songs"))
+        albums.append({**a, "owned": owned, "plex_rk": plex_rk.get(ak)})
     albums.sort(key=lambda a: a.get("date") or "", reverse=True)
     fb = db.feedback().get(key)
     out = {
@@ -916,6 +958,7 @@ def _spotify_client():
 class SpotifyPlay(BaseModel):
     kind: str
     id: str
+    on: str = "computer"   # what you're using Recordhound on: "computer" or "phone"
 
 
 @app.post("/api/spotify/play")
@@ -929,7 +972,7 @@ def spotify_play(body: SpotifyPlay):
         sp = _spotify_client()
         if not sp.can_play():
             return {"ok": False, "reason": "reconnect"}
-        return {"ok": True, "device": sp.play(body.kind, body.id)}
+        return {"ok": True, "device": sp.play(body.kind, body.id, body.on)}
     except SpotifyNoDevice:
         return {"ok": False, "reason": "no_device"}
     except Exception as e:
@@ -941,6 +984,7 @@ class SpotifyFind(BaseModel):
     title: str
     artist: str
     isrc: str | None = None
+    on: str = "computer"
 
 
 @app.post("/api/spotify/play-match")
@@ -962,9 +1006,9 @@ def spotify_play_match(body: SpotifyFind):
             db.commit()
         if not hit["id"]:
             return {"ok": False, "reason": "not_found"}
-        return {"ok": True, "device": sp.play(body.kind, hit["id"])}
-    except SpotifyNoDevice:
-        return {"ok": False, "reason": "no_device"}
+        return {"ok": True, "device": sp.play(body.kind, hit["id"], body.on)}
+    except SpotifyNoDevice:   # the page opens the app on it instead
+        return {"ok": False, "reason": "no_device", "id": hit["id"]}
     except Exception as e:
         return {"ok": False, "reason": "error", "message": friendly_error(e)}
 
@@ -1145,7 +1189,7 @@ def put_settings(values: dict):
         changed = config.save(updates)
     except ValueError as e:
         raise HTTPException(400, f"Invalid value: {e}")
-    if set(changed) & {"OWNED_WEIGHT", "RECENT_WEIGHT", "MIN_PLAYS", "MIN_LISTENERS", "MIN_FANS", "NOSEED_LIBRARIES", "NOSEED_TAGS", "SEED_ARTISTS", "CANDIDATE_POOL", "MAX_RECS"}:
+    if set(changed) & {"OWNED_WEIGHT", "RECENT_WEIGHT", "MIN_PLAYS", "MIN_LISTENERS", "MIN_FANS", "NOSEED_LIBRARIES", "NOSEED_TAGS", "SEED_ARTISTS", "CANDIDATE_POOL", "MAX_RECS", "COMP_TASTE"}:
         schedule_rescore(5)
     return {"changed": changed, **get_settings()}
 

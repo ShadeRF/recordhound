@@ -676,8 +676,9 @@ def test_play_buttons_use_spotify_when_connected_and_fall_back_to_previews(page,
         def find(self, kind, title, artist, isrc=None):
             return "a" * 22 if title in ("On Spotify", "Spotify Album") else None
 
-        def play(self, kind, sid):
+        def play(self, kind, sid, on="computer"):
             played.append((kind, sid))
+            assert on == "computer"
             return "Desk PC"
     monkeypatch.setattr(site["m"], "_spotify_client", lambda: FakeSpotify())
     try:

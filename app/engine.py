@@ -19,7 +19,7 @@ from collections import defaultdict
 SCORE_WEIGHTS = {"collab": 0.55, "content": 0.35, "pop": 0.10}
 JUNK_TAGS = {"seen live", "favorites", "favourite", "favorite", "albums i own", "under 2000 listeners", "spotify",
              "my favorite", "love", "awesome", "beautiful", "cool", "good", "best", "amazing", "check out", "seen in concert"}
-SOURCES = ("plex", "lastfm", "listenbrainz", "spotify", "spotify_export", "youtube_music")
+SOURCES = ("plex", "lastfm", "listenbrainz", "spotify", "spotify_export", "youtube_music", "plex_comp")
 
 
 # Spotify's account connection gives its own top-artists ranks, not play counts, so it isn't held to a minimum
@@ -244,7 +244,12 @@ def unplayed_albums(albums, seeds, infos, pos, idf, noseed=(), limit=600):
     out = []
     for a in albums:
         k = a.get("artist_key")
-        if a.get("plays") or not a.get("rk") or k in noseed:
+        if a.get("compilation"):   # a soundtrack or compilation: judged by the best-liked artist on it
+            on = [x for x in a.get("artists") or [] if x not in noseed]
+            if a.get("artists") and not on:   # everyone on it is someone you've asked not to learn from
+                continue
+            k = max(on, key=lambda x: (seeds.get(x) or {}).get("w", 0), default="")
+        if a.get("plays") or not a.get("rk") or (k and k in noseed):
             continue
         s = seeds.get(k) or {}
         if s.get("w", 0) < 0:
@@ -255,7 +260,10 @@ def unplayed_albums(albums, seeds, infos, pos, idf, noseed=(), limit=600):
         v = tag_vec(infos.get(k), idf)
         content = max(0.0, _cos(pos, v)) if v else 0.0
         score = 0.45 * artist_part + 0.35 * point_n + 0.20 * content
-        if s.get("listen", 0) >= 0.2:
+        who = s.get("name") if a.get("compilation") else a["artist"]
+        if a.get("compilation") and who and (s.get("listen", 0) >= 0.2 or rating >= 8):
+            why = f"Features {who}, who you play a lot" if s.get("listen", 0) >= 0.2 else f"Features {who}, who you rated highly"
+        elif s.get("listen", 0) >= 0.2:
             why = f"You play {a['artist']} a lot"
         elif rating >= 8:
             why = f"You rated {a['artist']} highly"
@@ -266,7 +274,7 @@ def unplayed_albums(albums, seeds, infos, pos, idf, noseed=(), limit=600):
             why = "Fits your taste"
         else:
             why = "In your library"
-        out.append({**{x: a.get(x) for x in ("rk", "title", "artist", "artist_key", "year", "added_at")},
+        out.append({**{x: a.get(x) for x in ("rk", "title", "artist", "artist_key", "year", "added_at", "compilation")},
                     "key": f"al:{a['rk']}", "score": round(score, 4), "why": why})
     out.sort(key=lambda r: (-r["score"], -(r.get("added_at") or 0)))
     return out[:limit]

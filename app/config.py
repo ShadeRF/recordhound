@@ -23,7 +23,11 @@ FIELDS = {
     "SPOTIFY_REFRESH_TOKEN": (str, "", True),  # set by "Connect Spotify"
     "SPOTIFY_CONNECTED_AT": (int, 0, False),
     "SPOTIFY_REDIRECT_URI": (str, "", False),
-    "SPOTIFY_PLAY": (bool, True, False),     # play buttons start the full song in Spotify when connected; off = 30-second previews  # empty = the one-click helper page; see clients.spotify_redirect()
+    "SPOTIFY_PLAY": (bool, True, False),
+    "COMP_TASTE": (bool, True, False),       # plays of songs on soundtracks and compilations count for the artists who sang them
+    "COMP_LIBRARY": (bool, True, False),     # Your Library includes unplayed soundtracks and compilations
+    "GAPS_EPS": (bool, False, False),        # Albums you're missing also lists EPs
+    "GAPS_SPECIAL": (bool, False, False),    # ...and remix, instrumental, live and acoustic releases     # play buttons start the full song in Spotify when connected; off = 30-second previews  # empty = the one-click helper page; see clients.spotify_redirect()
     "LIDARR_URL": (str, "", False),
     "LIDARR_API_KEY": (str, "", True),
     "SYNC_HOUR": (int, 4, False),            # -1 disables the nightly sync

@@ -343,13 +343,16 @@ def spotify_with(devices, play_status=204, scopes="user-modify-playback-state us
 
 def test_spotify_plays_on_the_active_device_or_an_open_app():
     sp = spotify_with([{"id": "phone", "name": "Phone", "type": "Smartphone"}, {"id": "pc", "name": "Desk PC", "type": "Computer"}])
-    assert sp.play("track", "4uLU6hMCjMI75M1A2tKUQC") == "Desk PC"   # nothing playing: the computer's app
+    assert sp.play("track", "4uLU6hMCjMI75M1A2tKUQC") == "Desk PC"   # on a computer: the computer's app
     assert sp.sent[-1] == ({"device_id": "pc"}, {"uris": ["spotify:track:4uLU6hMCjMI75M1A2tKUQC"]})
-    sp = spotify_with([{"id": "pc", "name": "Desk PC", "type": "Computer"}, {"id": "tv", "name": "TV", "type": "TV", "is_active": True}])
-    assert sp.play("album", "1DFixLWuPkv3KT3TnV35m3") == "TV"
-    assert sp.sent[-1] == ({"device_id": "tv"}, {"context_uri": "spotify:album:1DFixLWuPkv3KT3TnV35m3"})
-    with pytest.raises(clients.SpotifyNoDevice):
-        spotify_with([]).play("track", "4uLU6hMCjMI75M1A2tKUQC")
+    assert sp.play("track", "4uLU6hMCjMI75M1A2tKUQC", on="phone") == "Phone"
+    # whatever is playing in the living room is left alone
+    sp = spotify_with([{"id": "pc", "name": "Desk PC", "type": "Computer"}, {"id": "avr", "name": "Receiver", "type": "AVR", "is_active": True}])
+    assert sp.play("album", "1DFixLWuPkv3KT3TnV35m3") == "Desk PC"
+    assert sp.sent[-1] == ({"device_id": "pc"}, {"context_uri": "spotify:album:1DFixLWuPkv3KT3TnV35m3"})
+    for others in ([], [{"id": "avr", "type": "AVR", "is_active": True}, {"id": "spk", "type": "Speaker"}, {"id": "tv", "type": "TV"}]):
+        with pytest.raises(clients.SpotifyNoDevice):
+            spotify_with(others).play("track", "4uLU6hMCjMI75M1A2tKUQC")
     with pytest.raises(APIError, match="Premium"):
         spotify_with([{"id": "pc", "type": "Computer"}], 403).play("track", "4uLU6hMCjMI75M1A2tKUQC")
     assert not spotify_with([], scopes="user-top-read").can_play()
@@ -451,5 +454,116 @@ def test_play_match_remembers_what_it_found(client, monkeypatch):
     c.post("/api/spotify/play-match", json=body)
     assert found == ["Idioteque"] and sp.sent[-1][1] == {"uris": ["spotify:track:" + "x" * 22]}
     assert c.post("/api/spotify/play-match", json={"title": "Missing", "artist": "Radiohead"}).json()["reason"] == "not_found"
+    sp_off = spotify_with([{"id": "avr", "name": "Receiver", "type": "AVR", "is_active": True}])
+    sp_off.find = sp.find
+    monkeypatch.setattr(m, "_spotify_client", lambda: sp_off)
+    r = c.post("/api/spotify/play-match", json=body).json()   # no Spotify app open: the page gets the song to open in the app
+    assert r == {"ok": False, "reason": "no_device", "id": "x" * 22} and not sp_off.sent
+    monkeypatch.setattr(m, "_spotify_client", lambda: sp)
     assert c.post("/api/spotify/play-match", json={"kind": "album", "title": "Kid A", "artist": "Radiohead"}).json()["ok"]
     assert sp.sent[-1][1] == {"context_uri": "spotify:album:" + "x" * 22}
+
+
+def test_an_album_counts_as_owned_when_you_have_every_track(client, monkeypatch):
+    c, m = client
+    db.set_meta("plex_songs", {"pensacolamist|thedyinglight": "1", "pensacolamist|eyesonyou": "2", "pensacolamist|lostinlove": "3"})
+    tracks = [{"title": "The Dying Light", "artist": "Pensacola Mist"}, {"title": "Eyes On You", "artist": "Pensacola Mist"},
+              {"title": "Lost In Love", "artist": "Pensacola Mist"}]
+    for aid, title, want in ((70, "Lost In Love", True), (71, "Lost In Love (Instrumentals)", False)):
+        db.cache_put(f"dzalb:{aid}", tracks if aid == 70 else [{**t, "title": t["title"] + " (Instrumental)"} for t in tracks])
+        db.commit()
+        d = c.get(f"/api/album/{aid}/tracks?name=Pensacola%20Mist&album={title}").json()
+        assert d["all_owned"] is want and all(t["owned"] is want for t in d["tracks"]), title
+    assert not m._owns_every_track(tracks[:2], "Pensacola Mist", "Lost In Love - Live", db.get_meta("plex_songs"))
+    assert not m._owns_every_track([tracks[0], {"title": "Unknown"}], "Pensacola Mist", "Other", db.get_meta("plex_songs"))
+    assert m._owns_every_track(tracks, "Pensacola Mist", "Lost In Love (Deluxe)", db.get_meta("plex_songs"))
+    assert not m._tracks_owned([{"title": "Live Forever"}], "Oasis", "", {})[0]   # nothing known about Plex yet
+    db.conn().execute("DELETE FROM cache WHERE k IN ('dzalb:70', 'dzalb:71')")
+    db.commit()
+
+
+def test_bracketed_titles_match_with_or_without_the_brackets():
+    from app.clients import same_song
+    assert same_song("About Nothing (For the Love of Destiny)", "About Nothing for the Love of Destiny")
+    assert same_song("Norwegian Wood (This Bird Has Flown)", "Norwegian Wood")
+    assert same_song("Karma Police - Remastered 2017", "Karma Police")
+    assert same_song("Die For You (feat. The Midnight)", "Die For You")
+    assert not same_song("About Nothing (For the Love of Destiny)", "About Something")
+    plex = object.__new__(clients.Plex)
+    plex.sections = lambda: [{"key": "1", "title": "Music"}]
+    data = {8: [{"ratingKey": "a1", "title": "P.M. Dawn"}], 9: [{"ratingKey": "b1", "parentRatingKey": "a1", "title": "The Bliss Album...?"}],
+            10: [{"ratingKey": "t7", "grandparentRatingKey": "a1", "parentRatingKey": "b1", "title": "About Nothing (For the Love of Destiny)"}]}
+    plex._paged = lambda sid, kind, **k: iter(data[kind])
+    plex.artists()
+    import app.main as m
+    assert m._tracks_owned([{"title": "About Nothing for the Love of Destiny"}], "P.M. Dawn", "The Bliss Album...?", plex.songs) == [True]
+
+
+def test_albums_youre_missing_follows_the_eps_and_special_release_settings(client, monkeypatch):
+    c, m = client
+    from app.clients import special_release
+    assert all(special_release(t) for t in ("Synthetic (Remixes)", "The Midnight Remixed", "Heroes (& Instrumentals)",
+                                            "Siberia (Acoustic)", "Live at Wembley", "Album - Live"))
+    assert not any(special_release(t) for t in ("Live Through This", "Alive", "The Listening (Deluxe Version)", "Endless Summer"))
+    al = lambda t, kind="album", fans=1: {"title": t, "type": kind, "fans": fans, "special": special_release(t)}
+    db.set_meta("gaps", {"at": 1, "groups": [
+        {"key": "themidnight", "name": "The Midnight", "owned": 8, "albums": [al("Monsters", fans=9), al("Synthetic (Remixes)"), al("Horizons EP", "ep")]},
+        {"key": "remixonly", "name": "Remix Only", "owned": 1, "albums": [al("Hits (Remixes)")]},
+        {"key": "old", "name": "Older Sync", "owned": 2, "albums": [{"title": "Plain", "type": "album"}]}]})
+    for eps, special, want in ((False, False, {"The Midnight": ["Monsters"], "Older Sync": ["Plain"]}),
+                               (True, False, {"The Midnight": ["Monsters", "Horizons EP"], "Older Sync": ["Plain"]}),
+                               (True, True, {"The Midnight": ["Monsters", "Synthetic (Remixes)", "Horizons EP"], "Remix Only": ["Hits (Remixes)"], "Older Sync": ["Plain"]})):
+        c.put("/api/settings", json={"GAPS_EPS": eps, "GAPS_SPECIAL": special})
+        d = c.get("/api/gaps").json()
+        assert {g["name"]: [a["title"] for a in g["albums"]] for g in d["groups"]} == want
+        assert next(g for g in d["groups"] if g["name"] == "The Midnight")["total"] == 8 + len(want["The Midnight"])
+    c.put("/api/settings", json={"GAPS_EPS": False, "GAPS_SPECIAL": False})
+    db.set_meta("gaps", None)
+
+
+def test_soundtracks_and_compilations():
+    from app.clients import is_compilation, owned_track
+    assert all(is_compilation(n) for n in ("Various Artists", "VA", "Original Soundtrack", "Original Motion Picture Soundtrack",
+                                           "Soundtrack", "OST", "Original Broadway Cast", "Original Cast Recording", "Original Score"))
+    assert not any(is_compilation(n) for n in ("John Williams", "Hans Zimmer", "The Soundtrack of Our Lives", "Cast", "Original"))
+    plex = object.__new__(clients.Plex)
+    plex.sections = lambda: [{"key": "1", "title": "Music"}]
+    data = {8: [{"ratingKey": "va", "title": "Various Artists"}, {"ratingKey": "jw", "title": "John Williams"}],
+            9: [{"ratingKey": "drive", "parentRatingKey": "va", "title": "Drive (Original Motion Picture Soundtrack)"},
+                {"ratingKey": "sw", "parentRatingKey": "jw", "title": "Star Wars"}],
+            10: [{"ratingKey": "t1", "grandparentRatingKey": "va", "parentRatingKey": "drive", "title": "Nightcall",
+                  "originalTitle": "Kavinsky; Lovefoxxx", "viewCount": 12},
+                 {"ratingKey": "t2", "grandparentRatingKey": "va", "parentRatingKey": "drive", "title": "A Real Hero",
+                  "originalTitle": "College & Electric Youth", "viewCount": 3},
+                 {"ratingKey": "t3", "grandparentRatingKey": "va", "parentRatingKey": "drive", "title": "Tick of the Clock"},
+                 {"ratingKey": "t4", "grandparentRatingKey": "jw", "parentRatingKey": "sw", "title": "Main Title", "viewCount": 5,
+                  "originalTitle": "John Williams; London Symphony Orchestra"}]}
+    plex._paged = lambda sid, kind, **k: iter(data[kind])
+    rows = plex.artists()
+    assert [r["name"] for r in rows] == ["John Williams"] and rows[0]["plays"] == 5   # a composer's score is his
+    comp = plex.comp_albums
+    assert len(comp) == 1 and comp[0]["title"].startswith("Drive") and comp[0]["compilation"] and comp[0]["artists"][0] == "kavinsky"
+    assert plex.comp_plays["kavinsky"]["plays"] == 12 and plex.comp_plays["college"]["plays"] == 3
+    # a liked song on a soundtrack is owned, even when the track doesn't name its artist
+    assert owned_track({"title": "Nightcall", "artists": ["Kavinsky"], "album": "Drive"}, plex.songs) == "t1"
+    assert owned_track({"title": "Tick of the Clock", "artists": ["The Chromatics"],
+                        "album": "Drive (Original Motion Picture Soundtrack)"}, plex.songs) == "t3"
+    # an unplayed soundtrack shows in Your Library, judged by the artists on it
+    from app import engine
+    seeds = {"kavinsky": {"w": 2.0, "name": "Kavinsky", "listen": 0.8}}
+    comp = [{**comp[0], "plays": 0}]   # never played
+    out = engine.unplayed_albums(comp, seeds, {}, {}, {}, set())
+    assert out and out[0]["title"].startswith("Drive") and out[0]["why"] == "Features Kavinsky, who you play a lot"
+    assert engine.unplayed_albums(comp, seeds, {}, {}, {}, {"kavinsky"})   # others on it still count
+    assert not engine.unplayed_albums(comp, seeds, {}, {}, {}, {"kavinsky", "college"})   # everyone on it excluded
+
+
+def test_soundtrack_settings(client, monkeypatch):
+    c, m = client
+    db.set_meta("unplayed", [{"rk": "1", "title": "Drive (Original Motion Picture Soundtrack)", "artist": "Various Artists",
+                              "artist_key": "", "compilation": True},
+                             {"rk": "2", "title": "Kid A", "artist": "Radiohead", "artist_key": "radiohead"}])
+    assert c.get("/api/library").json()["total"] == 2
+    monkeypatch.setattr(config, "COMP_LIBRARY", False)
+    assert [a["title"] for a in c.get("/api/library").json()["items"]] == ["Kid A"]
+    db.set_meta("unplayed", None)

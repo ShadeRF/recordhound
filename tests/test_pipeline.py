@@ -148,6 +148,9 @@ def test_api():
     r = c.get("/api/recs?tags=shoegaze").json()
     assert r["total"] > 5 and all("shoegaze" in x["tags"] for x in r["items"])
     k = r["items"][0]["key"]
+    # the browser tests share this database with Deezer switched off, so they may have saved "not on Deezer" for this artist
+    db.conn().execute("DELETE FROM cache WHERE k IN (?, ?)", ("dz:" + k, "dztop:" + k))
+    db.commit()
     a = c.get(f"/api/artist/{k}").json()
     assert a["name"] and a["albums"] and a["similar"] and a["because"]
     assert c.post("/api/saved", json={"key": k, "name": a["name"]}).json()["saved"]
