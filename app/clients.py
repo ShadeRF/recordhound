@@ -105,6 +105,9 @@ _SPOKEN = [(re.compile(r"\bthru\b", re.I), "through"), (re.compile(r"\bwanna\b",
            (re.compile(r"\bgonna\b", re.I), "going to"), (re.compile(r"\bgotta\b", re.I), "got to"),
            (re.compile(r"#\s*(\d+)"), r"no \1")]
 _TRAILING_ROMAN = re.compile(r"\s(ii|iii|iv|vi|vii|viii|ix)\s*$", re.I)
+# Labels that say nothing about the recording: "(Album Version)", "(2001 Remaster)", "[Bonus Track]", "(Original)"
+_PLAIN_LABEL = re.compile(r"[\(\[]\s*(?:(?:album|single|radio|lp|mono|stereo|original|78 rpm)\s+(?:version|edit|mix)|single version\s*/\s*mono"
+                          r"|(?:\d{4}\s+)?remaster(?:ed)?(?:\s+(?:version|\d{4}))?|bonus(?:\s+track)?|original|mono|stereo|radio edit|edit)\s*[\)\]]", re.I)
 
 
 def _numbered(title):
@@ -123,18 +126,22 @@ def _numbered(title):
 def song_keys(title):
     """Every way to read a title. Brackets can be a version label ("Song (Live)" is "Song") or part of the name
     ("About Nothing (For the Love of Destiny)" is "About Nothing for the Love of Destiny"), so both readings count."""
-    title = _numbered(title)   # "Pt. II" and "Part 2" are the same
+    title = _PLAIN_LABEL.sub("", _numbered(title))   # "Pt. II" and "Part 2" are the same; "(Album Version)" says nothing
     s = unicodedata.normalize("NFKD", (title or "").translate(_PLAIN)).encode("ascii", "ignore").decode().lower()
     whole = re.sub(r"\s+-\s+.*$", "", s)
     whole = re.sub(r"[\(\[]\s*(?:feat|ft|featuring|with)\.?\s[^\)\]]*[\)\]]", "", whole)   # "(feat. X)" is never part of the name
     whole = re.sub(r"\s(?:feat|ft|featuring)\.?\s.*$", "", whole).replace("&", " and ")
     no_and = re.sub(r"\band\b", " ", whole)   # "Star Wars and the Revenge…" / "Star Wars & the Revenge…" / "…/ The Revenge…"
-    return frozenset(k for k in (song_key(title), re.sub(r"[^a-z0-9]+", "", whole), re.sub(r"[^a-z0-9]+", "", no_and)) if k)
+    keys = [song_key(title), re.sub(r"[^a-z0-9]+", "", whole), re.sub(r"[^a-z0-9]+", "", no_and)]
+    head, colon, tail = whole.partition(": ")   # "Act V, Scene V: And So It Ends Like It Begins"
+    if colon and len(re.findall(r"[a-z0-9]+", tail)) >= 4 and not re.search(r"[\(\[]", head):
+        keys.append(re.sub(r"[^a-z0-9]+", "", tail))
+    return frozenset(k for k in keys if k)
 
 
 def _exact_key(title):
     """The title with its version label kept: "Neon Medusa (Live)" is "neonmedusalive", not "neonmedusa"."""
-    s = unicodedata.normalize("NFKD", _numbered(title).translate(_PLAIN)).encode("ascii", "ignore").decode().lower()
+    s = unicodedata.normalize("NFKD", _PLAIN_LABEL.sub("", _numbered(title)).translate(_PLAIN)).encode("ascii", "ignore").decode().lower()
     s = re.sub(r"[\(\[]\s*(?:feat|ft|featuring|with)\.?\s[^\)\]]*[\)\]]", "", s).replace("&", " and ")
     s = re.sub(r"\bversion\b", "", s)   # "(Instrumental Version)" is "(Instrumental)"
     return re.sub(r"[^a-z0-9]+", "", s)

@@ -734,3 +734,15 @@ def test_release_kinds_for_the_artist_page_tabs():
     assert kind("Hall and Oates", date="2017-01-01") == "compilation"                # not a studio album on MusicBrainz
     assert kind("Brand New Record", date="2099-01-01") == "album"                    # too new for MusicBrainz: trust it
     assert release_kind("Some Record", "ep") == "ep" and release_kind("Some Record") == "album"   # no MusicBrainz list
+
+
+def test_matching_rules_from_the_third_report():
+    from app.clients import _exact_key, same_song, song_keys, tracks_owned
+    assert same_song("(It's Hard To Live Up To) The Rock (Album Version)", "(It's Hard To Live Up To) The Rock")
+    assert same_song("Straight For The Heart (2018 Remaster)", "Straight For The Heart")
+    assert same_song("Act V, Scene V: And So It Ends Like It Begins", "And So It Ends Like It Begins")
+    assert not same_song("Symphony No. 5: I. Allegro", "Symphony No. 7: I. Allegro")   # short tails don't count
+    assert _exact_key("Neon Medusa (Live) (2021 Remaster)") == _exact_key("Neon Medusa (Live)")
+    assert _exact_key("Runaway (Live Version)") == _exact_key("Runaway (Live)")      # but versions are kept
+    songs = {f"shenandoah|{k}": "1" for k in song_keys("(It's Hard To Live Up To) The Rock")}
+    assert tracks_owned([{"title": "(It's Hard To Live Up To) The Rock (Album Version)"}], "Shenandoah", "Super Hits", songs) == [True]
