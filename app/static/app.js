@@ -549,6 +549,91 @@ async function loadLibrary(more, typing) {
   };
 }
 
+// ------------------------------------------------------------------ liked, not owned (Spotify Liked Songs that aren't in Plex)
+let liked = null, likedShown = 150;
+const LIKED_TITLE = "Liked, not owned";
+async function loadLiked() {
+  likedShown = 150;
+  listShell(LIKED_TITLE, "", `<div class="shimmer" style="height:300px;border-radius:12px"></div>`);
+  const my = ++listSeq; let d; try { d = await api("/api/liked"); } catch (e) { if (my === listSeq) listShell(LIKED_TITLE, esc(e.message), ""); return; }
+  if (my !== listSeq) return;   // you've moved on to another page since
+  liked = d; renderLiked();
+}
+function likedRow(a) {
+  const lid = lastStatus.lidarr;
+  return `<div class="lk-row" data-lk="${esc(a.id)}">
+    ${a.cover ? `<img class="lk-cover" loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="lk-cover"></div>`}
+    <div class="lk-main"><div class="lk-t">${esc(a.title || "")}</div>
+      <div class="lk-s"><button class="link" data-lk-artist>${esc(a.artist || "")}</button>${a.year ? " · " + esc(a.year) : ""}${a.type === "single" ? " · Single" : a.type === "compilation" ? " · Compilation" : ""}</div>
+      <div class="lk-songs"><span class="lk-heart" aria-label="Liked">♥</span> ${a.songs.map(esc).join(" · ")}</div></div>
+    <div class="lk-act">${!lid ? "" : a.requested ? `<span class="pill on">✓ Sent to Lidarr</span>` : `<button class="btn primary" data-lk-lidarr>${ICON.plus}Add album to Lidarr</button>`}
+      <button class="btn" data-lk-hide>Hide</button></div>
+    <div class="lk-box" hidden></div></div>`;
+}
+function renderLiked() {
+  const d = liked;
+  if (!d.ready) {
+    listShell(LIKED_TITLE, "", d.connected ? `<div class="empty">This fills in after your next sync, which reads your Liked Songs from Spotify and every song in Plex.</div>`
+      : `<div class="empty">Connect your Spotify account to see the songs you've liked there that aren't in your Plex library.<br><br><button class="btn primary" id="lkConnect">Connect Spotify in Settings</button></div>`);
+    if ($("lkConnect")) $("lkConnect").onclick = () => openSetting("spotify");
+    return;
+  }
+  const missing = d.albums.reduce((n, a) => n + a.songs.length, 0), plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? "" : "s"}`;
+  const sub = `${plural(missing, "song")} of the ${d.total.toLocaleString()} you've liked on Spotify ${missing === 1 ? "isn't" : "aren't"} in Plex, newest like first.` +
+    (d.hidden ? ` ${plural(d.hidden, "song")} hidden. <button class="link accent" id="lkUnhide">Show them again</button>` : "");
+  const tools = `<div class="lib-tools"><button class="btn" id="lkPl" ${d.owned ? "" : "disabled"} title="Makes “${esc(d.playlist)}” in Plex, replacing the one made last time">Plex playlist of the ${d.owned.toLocaleString()} you own</button></div>`;
+  listShell(LIKED_TITLE, sub, d.albums.length ? `<div class="lk-list">${d.albums.slice(0, likedShown).map(likedRow).join("")}</div>
+      ${d.albums.length > likedShown ? `<div style="text-align:center;margin:24px"><button class="btn" id="lkMore">Show more</button></div>` : ""}`
+    : `<div class="empty">${d.total ? "You own every song you've liked on Spotify." : "No liked songs on Spotify yet."}</div>`, tools);
+  if ($("lkMore")) $("lkMore").onclick = () => { likedShown += 150; renderLiked(); };
+  if ($("lkUnhide")) $("lkUnhide").onclick = async () => { try { await api("/api/liked/unhide-all", { method: "POST" }); } catch (e) { toast(e.message); return; } loadLiked(); };
+  $("lkPl").onclick = async () => {
+    $("lkPl").disabled = true;
+    try { const r = await api("/api/plex/liked-playlist", { method: "POST" }); toast(`Made “${r.title}” in Plex with ${plural(r.songs, "song")}`); }
+    catch (e) { toast(e.message); }
+    $("lkPl").disabled = false;
+  };
+}
+const likedHide = (id, on) => api("/api/liked/hide", { method: "POST", body: JSON.stringify({ id, on }) });
+$("listBody").addEventListener("click", async e => {
+  if (view !== "liked" || !liked) return;
+  const row = e.target.closest("[data-lk]"); if (!row) return;
+  const id = row.dataset.lk, a = liked.albums.find(x => x.id === id); if (!a) return;
+  if (e.target.closest("[data-lk-artist]")) { openArtist(a.artist_key, a.artist); return; }
+  if (e.target.closest("[data-lk-hide]")) {
+    try { await likedHide(id, true); } catch (err) { toast(err.message); return; }
+    liked.albums = liked.albums.filter(x => x !== a); liked.hidden += a.songs.length; renderLiked();
+    toast(`Hid ${a.title}`, { label: "Undo", fn: async () => { try { await likedHide(id, false); } catch (err) { toast(err.message); return; } loadLiked(); } });
+    return;
+  }
+  if (e.target.closest("[data-lk-lidarr]")) {
+    const box = row.querySelector(".lk-box");
+    if (!box.hidden) { box.hidden = true; return; }
+    box.hidden = false; box.innerHTML = `<div class="shimmer" style="height:40px"></div>`;
+    try {
+      if (!lidarrOpts) lidarrOpts = await api("/api/lidarr/options");
+      const last = await api("/api/lidarr/last"), o = lidarrOpts;
+      const sel = (arr, cls, v, lbl) => `<select class="${cls}">${arr.map(x => `<option value="${esc(x.id ?? x.path)}" ${String(x.id ?? x.path) === String(v) ? "selected" : ""}>${esc(lbl(x))}</option>`).join("")}</select>`;
+      box.innerHTML = `<div class="row">
+          <label>Quality profile${sel(o.profiles, "lkQ", last.quality_id, x => x.name)}</label>
+          <label>Metadata profile${sel(o.metadata, "lkM", last.metadata_id, x => x.name)}</label>
+          <label>Root folder${sel(o.roots, "lkR", last.root, x => x.path)}</label>
+          <button class="btn primary" data-lk-add>Add album</button></div>
+        <p class="muted">Lidarr monitors and searches for this album only.${a.artist_in_lidarr ? "" : ` ${esc(a.artist)} isn't in Lidarr yet, so they're added with nothing else monitored.`}</p>`;
+    } catch (err) { box.innerHTML = `<div class="muted">${esc(err.message)}</div>`; }
+    return;
+  }
+  const add = e.target.closest("[data-lk-add]");
+  if (add) {
+    add.disabled = true;
+    try {
+      const r = await api("/api/liked/lidarr", { method: "POST", body: JSON.stringify({ id, quality_id: +row.querySelector(".lkQ").value,
+        metadata_id: +row.querySelector(".lkM").value, root: row.querySelector(".lkR").value }) });
+      a.requested = true; row.outerHTML = likedRow(a); toast(`Lidarr is looking for ${r.title || a.title}`);
+    } catch (err) { toast(err.message); add.disabled = false; }
+  }
+});
+
 // ------------------------------------------------------------------ rate
 let rateQ = [], rateMode = "library", rateDone = 0, rateRemaining = 0, rateBusy = false;
 const rateSkipKey = () => `rateSkip_${rateMode}`;
@@ -1031,13 +1116,13 @@ $("saveBtn").onclick = async () => {
 window.addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 
 // ------------------------------------------------------------------ router
-const VIEWS = ["home", "setup", "picks", "stream", "library", "saved", "rate", "history", "settings", "search", "like", "gaps", "releases"];
+const VIEWS = ["home", "setup", "picks", "stream", "liked", "library", "saved", "rate", "history", "settings", "search", "like", "gaps", "releases"];
 function showView(v, keepFilters) {
   view = v;
   document.querySelectorAll(".view").forEach(x => x.classList.remove("on"));
   const sec = { home: "v-home", picks: "v-grid", stream: "v-grid", rate: "v-rate", history: "v-history", settings: "v-settings", setup: "v-setup" }[v] || "v-list";
   $(sec).classList.add("on");
-  document.querySelectorAll("#nav button, #gear").forEach(b => b.classList.toggle("on", b.dataset.view === v));
+  document.querySelectorAll("#nav button, #gear").forEach(b => b.classList.toggle("on", b.dataset.view === v || (v === "liked" && b.dataset.view === "stream")));
   const grid = v === "picks" || v === "stream";
   $("filters").style.display = $("activeRow").style.display = grid ? "" : "none";
   if (v !== "settings") $("savebar").classList.remove("on");
@@ -1045,7 +1130,7 @@ function showView(v, keepFilters) {
   if (grid) {
     if (!keepFilters) loadF();
     syncControls();
-    $("gridHead").innerHTML = v === "stream" ? `<div class="lib-banner"><h3>You stream these, but don't own them</h3><p>Artists you play on ListenBrainz, Spotify, YouTube Music or Last.fm that aren't in Plex${lastStatus.lidarr ? " or Lidarr" : ""}, most-played first.${lastStatus.lidarr ? " Add them to Lidarr from here." : ""}</p></div>` : "";
+    $("gridHead").innerHTML = v === "stream" ? `<div class="lib-banner"><h3>You stream these, but don't own them</h3><p>Artists you play on ListenBrainz, Spotify, YouTube Music or Last.fm that aren't in Plex${lastStatus.lidarr ? " or Lidarr" : ""}, most-played first.${lastStatus.lidarr ? " Add them to Lidarr from here." : ""}</p><p><a class="link accent" href="#/liked">Songs you've liked on Spotify but don't own ›</a></p></div>` : "";
     api("/api/tags?kind=" + gridKind()).then(d => tagFacets = d).catch(() => {});
     load(true);
   }
@@ -1058,6 +1143,7 @@ function showView(v, keepFilters) {
   if (v === "gaps") loadGaps();
   if (v === "releases") loadReleases();
   if (v === "library") loadLibrary();
+  if (v === "liked") loadLiked();
 }
 let skipRoute = false;
 function route() {

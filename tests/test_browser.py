@@ -445,7 +445,7 @@ def test_phone_layout(browser, site):
     errors = []
     p.on("pageerror", lambda e: errors.append(str(e)))
     try:
-        for where in ("home", "picks", "rate", "settings"):
+        for where in ("home", "picks", "rate", "settings", "liked"):
             p.goto(site["base"] + "#/" + where)
             p.wait_for_load_state("networkidle")
             assert p.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"{where} scrolls sideways on a phone"
@@ -494,3 +494,32 @@ def test_youtube_music_history_upload_and_remove(page, tmp_path):
     assert "1 artist imported" in card.inner_text()
     card.locator("#ytRemove").click()
     page.wait_for_function("document.querySelector('#svc-youtube summary').innerText.includes('Not set up')")
+
+
+def test_liked_not_owned_lists_missing_songs_and_hides_albums(page, monkeypatch):
+    from app import config, db
+    song = lambda t, a, al, aid, when: {"id": aid + t, "title": t, "artists": [a], "album": al, "album_id": aid, "album_type": "single",
+                                        "album_artist": a, "year": "2026", "cover": None, "added_at": when}
+    db.set_meta("spotify_liked", [song("Isabelle", "Whitney Whitney", "Isabelle", "al1", "2026-02-01"),
+                                  song("Feels So Far Away", "Bellvie", "Feels So Far Away", "al2", "2026-01-01"),
+                                  song("Owned One", "Mine", "Mine", "al3", "2025-01-01")])
+    db.set_meta("plex_songs", {"mine|ownedone": "42"})
+    db.set_meta("liked_hidden", None)
+    monkeypatch.setattr(config, "SPOTIFY_REFRESH_TOKEN", "r")
+    try:
+        go(page, "stream")
+        page.click("text=Songs you've liked on Spotify but don't own")
+        settle(page)
+        assert page.locator("#nav button.on").inner_text() == "You Stream"
+        rows = page.locator(".lk-row")
+        assert rows.count() == 2 and "Isabelle" in rows.first.inner_text()
+        assert "2 songs of the 3 you've liked" in view(page).inner_text()
+        assert "of the 1 you own" in page.locator("#lkPl").inner_text()
+        rows.first.locator("[data-lk-hide]").click()
+        page.wait_for_function("document.querySelectorAll('.lk-row').length === 1")
+        assert "1 song hidden" in view(page).inner_text() and "1 song of the 3" in view(page).inner_text()
+        page.reload(); settle(page)
+        assert page.locator(".lk-row").count() == 1 and "1 song hidden" in view(page).inner_text()   # remembered
+    finally:
+        for k in ("spotify_liked", "plex_songs", "liked_hidden"):
+            db.set_meta(k, None)

@@ -83,6 +83,7 @@ Your settings and data carry over when you switch, so you can move between them 
 - **For You:** a *This week* summary (new picks, new releases, what's coming soon), *Top picks* (reshuffled weekly, never dominated by one of your artists), *New for you this week*, *Because you play…*, *Because you love…*, genre rows, *Deep cuts*, *New from artists you love*, *Albums you're missing*, *In your library, never played* and your saved artists.
 - **All Picks:** every pick with genre include/exclude, how well known an artist is (deep cuts, mid, well known), and sorting.
 - **You Stream:** artists you play a lot on ListenBrainz, Spotify, YouTube Music or Last.fm but don't own in Plex (or Lidarr), most-played first. The best list to send to Lidarr.
+- **Liked, not owned:** the songs you've liked on Spotify that aren't in Plex, grouped by album, newest like first. Owning any version of a song counts (a remaster, a live take, the same song on a compilation). Send an album to Lidarr (only that album is monitored), hide the ones you don't want, or make a Plex playlist of the liked songs you do own, for Plexamp. Needs the Spotify account connection.
 - **Your Library:** albums you own but have never played, ranked by how much you like the artist and how well they fit your taste, each with a reason. One click puts the top 25, 50 or 100 in a Plex playlist for Plexamp.
 - **Rate:** rate the artists you play, one at a time (keys 1–5; hold Shift for a half star). Ratings go to the artist in Plex. You can also rate picks you already know, so they stop being suggested and shape the rest. Every artist page has a **Rate** button too.
 - **Albums you're missing** from artists you already collect, and **new releases** from artists you love, including announced albums from MusicBrainz.
@@ -112,7 +113,7 @@ Score = 55% "your artists point here" + 35% taste match + 10% popularity. Every 
 | Wikipedia | Automatic, no key | Artist bios |
 | ListenBrainz account | Optional | Your listening history (public profile) |
 | Spotify history file | Optional | Upload the zip from spotify.com/account/privacy. No developer account needed |
-| Spotify account | Optional | Top, followed and saved artists, kept current. Needs a personal Spotify developer app (Spotify requires Premium and allows 5 users per app) |
+| Spotify account | Optional | Top, followed and saved artists, and your Liked Songs, kept current. Needs a personal Spotify developer app (Spotify requires Premium and allows 5 users per app) |
 | YouTube Music history file | Optional | Upload your watch history from Google Takeout. Only YouTube Music plays count |
 | Last.fm | Optional | See below |
 | Lidarr | Optional | Adding artists |

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, auth, security, config, db, engine
-from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, album_key, artist_key, artist_source,
+from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, album_key, artist_key, artist_source, credit_keys, song_key,
                       listenbrainz_top_artists, parse_spotify_export, parse_youtube_music, spotify_auth_url, spotify_exchange, spotify_pasted, spotify_redirect,
                       SPOTIFY_HELPER, SPOTIFY_LOOPBACK)
 from .sync import Syncer, friendly_error
@@ -373,6 +373,120 @@ def make_playlist(body: PlaylistBody):
     except Exception as e:
         raise HTTPException(502, f"Plex couldn't make the playlist: {friendly_error(e)}")
     return {"ok": True, "title": config.PLEX_PLAYLIST, "albums": len(rks)}
+
+
+# ======================================================================= Liked, not owned (Spotify Liked Songs vs Plex)
+
+LIKED_PLAYLIST = "Recordhound: Liked on Spotify"
+
+
+def _owned_rk(t, songs):
+    """The Plex track for a liked song, if you own it under any of its credited artists."""
+    sk = song_key(t.get("title"))
+    for credit in (t.get("artists") or []) + [t.get("album_artist") or ""]:
+        for ak in credit_keys(credit):
+            rk = songs.get(f"{ak}|{sk}")
+            if rk:
+                return rk
+    return None
+
+
+def _liked():
+    """(liked songs, Plex songs). Either is None until a sync has read it."""
+    return db.get_meta("spotify_liked"), db.get_meta("plex_songs")
+
+
+@app.get("/api/liked")
+def liked():
+    tracks, songs = _liked()
+    out = {"connected": bool(config.SPOTIFY_REFRESH_TOKEN), "ready": tracks is not None and songs is not None,
+           "total": 0, "owned": 0, "albums": [], "hidden": 0, "playlist": LIKED_PLAYLIST}
+    if not out["ready"]:
+        return out
+    hidden, added = set(db.get_meta("liked_hidden", [])), set(db.get_meta("liked_lidarr", []))
+    lidarr = set(db.get_meta("lidarr_keys", []))
+    groups = {}
+    for t in tracks:
+        if _owned_rk(t, songs):
+            out["owned"] += 1
+            continue
+        gid = t.get("album_id") or f"{t.get('album')}|{t.get('album_artist')}"
+        if gid in hidden:
+            out["hidden"] += 1
+            continue
+        artist = t.get("album_artist") or (t.get("artists") or [""])[0]
+        g = groups.setdefault(gid, {"id": gid, "title": t.get("album"), "artist": artist, "artist_key": artist_key(artist),
+                                    "cover": t.get("cover"), "year": t.get("year"), "type": t.get("album_type"),
+                                    "added_at": t.get("added_at"), "songs": [], "requested": gid in added,
+                                    "artist_in_lidarr": artist_key(artist) in lidarr})
+        g["songs"].append(t.get("title"))
+    out["total"] = len(tracks)
+    out["albums"] = sorted(groups.values(), key=lambda g: g["added_at"] or "", reverse=True)   # newest like first
+    return _fast(out)
+
+
+class LikedHide(BaseModel):
+    id: str
+    on: bool = True
+
+
+@app.post("/api/liked/hide")
+def liked_hide(body: LikedHide):
+    hidden = set(db.get_meta("liked_hidden", []))
+    hidden.add(body.id) if body.on else hidden.discard(body.id)
+    db.set_meta("liked_hidden", sorted(hidden))
+    return {"ok": True}
+
+
+@app.post("/api/liked/unhide-all")
+def liked_unhide_all():
+    db.set_meta("liked_hidden", [])
+    return {"ok": True}
+
+
+class LikedLidarr(BaseModel):
+    id: str
+    quality_id: int
+    metadata_id: int
+    root: str
+
+
+@app.post("/api/liked/lidarr")
+def liked_lidarr(body: LikedLidarr):
+    tracks, _ = _liked()
+    t = next((t for t in tracks or [] if (t.get("album_id") or f"{t.get('album')}|{t.get('album_artist')}") == body.id), None)
+    if not t:
+        raise HTTPException(404, "That album isn't in your liked songs any more. Refresh the page.")
+    artist = t.get("album_artist") or (t.get("artists") or [""])[0]
+    try:
+        title = Lidarr(config.LIDARR_URL, config.LIDARR_API_KEY).add_album(artist, t.get("album"), body.quality_id, body.metadata_id, body.root)
+    except Exception as e:
+        raise HTTPException(502, friendly_error(e))
+    added = set(db.get_meta("liked_lidarr", []))
+    added.add(body.id)
+    db.set_meta("liked_lidarr", sorted(added))
+    last = db.get_meta("lidarr_last", {})
+    db.set_meta("lidarr_last", {**last, "quality_id": body.quality_id, "metadata_id": body.metadata_id, "root": body.root})
+    return {"ok": True, "title": title}
+
+
+@app.post("/api/plex/liked-playlist")
+def liked_playlist():
+    """Your Spotify Liked Songs that you own, newest like first, as a Plex playlist (replacing the one made last time)."""
+    tracks, songs = _liked()
+    rks = list(dict.fromkeys(rk for rk in (_owned_rk(t, songs) for t in tracks or []) if rk)) if songs else []
+    if not rks:
+        raise HTTPException(400, "None of your liked songs are in Plex yet." if songs else "This works after your next sync.")
+    try:
+        plex = Plex(config.PLEX_URL, config.PLEX_TOKEN)
+        machine = db.get_meta("plex_machine") or plex.machine_id()
+        mine = db.get_meta("plex_liked_playlist_rk")   # only ever replace the playlist made here
+        new = plex.replace_playlist(LIKED_PLAYLIST, rks, machine, [mine] if mine else [])
+        if new:
+            db.set_meta("plex_liked_playlist_rk", new)
+    except Exception as e:
+        raise HTTPException(502, f"Plex couldn't make the playlist: {friendly_error(e)}")
+    return {"ok": True, "title": LIKED_PLAYLIST, "songs": len(rks)}
 
 
 @app.get("/api/gaps")
@@ -841,6 +955,7 @@ def spotify_finish(body: Pasted):
 def spotify_disconnect():
     config.save({"SPOTIFY_REFRESH_TOKEN": "", "SPOTIFY_CONNECTED_AT": 0})
     db.replace_history("spotify", [])
+    db.set_meta("spotify_liked", None)
     schedule_rescore(5)
     return {"ok": True}
 

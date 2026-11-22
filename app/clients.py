@@ -49,6 +49,30 @@ def album_key(title):
     return re.sub(r"[^a-z0-9]+", "", cut) or re.sub(r"[^a-z0-9]+", "", s)
 
 
+@functools.lru_cache(maxsize=200_000)
+def song_key(title):
+    """One key per song however it's labelled: "Song - Remastered 2011", "Song (Radio Edit)" and "Song feat. X"
+    are all "song". Forgiving on purpose: owning any version of a song counts."""
+    s = unicodedata.normalize("NFKD", (title or "").translate(_PLAIN)).encode("ascii", "ignore").decode().lower()
+    cut = re.sub(r"\s+-\s+.*$", "", s)                       # Spotify's " - Remastered 2011", " - Radio Edit"
+    cut = re.sub(r"[\(\[][^\)\]]*[\)\]]", "", cut)            # "(Live)", "[feat. X]"
+    cut = re.sub(r"\s(?:feat|ft|featuring)\.?\s.*$", "", cut)
+    cut = cut.replace("&", " and ")
+    return re.sub(r"[^a-z0-9]+", "", cut) or re.sub(r"[^a-z0-9]+", "", s) or (title or "").strip().lower()
+
+
+_CREDIT_SPLIT = re.compile(r"\s*(?:,|;|/|\s&\s|\sx\s|\s(?:feat|ft)\.?\s|\sfeaturing\s|\swith\s|\sand\s)\s*", re.I)
+
+
+@functools.lru_cache(maxsize=50_000)
+def credit_keys(credit):
+    """Artist keys for a credit like "Calvin Harris, Dua Lipa" or "Simon & Garfunkel": the whole credit and each name."""
+    keys = {artist_key(credit)}
+    keys.update(artist_key(p) for p in _CREDIT_SPLIT.split(credit or "") if p.strip())
+    keys.discard("")
+    return frozenset(keys)
+
+
 # ======================================================================= Plex
 
 class Plex:
@@ -97,8 +121,10 @@ class Plex:
                 break
 
     def artists(self, step=lambda *a: None):
-        """One row per artist: plays (Plexamp counts), rating, owned albums."""
+        """One row per artist: plays (Plexamp counts), rating, owned albums. Also fills self.songs:
+        {"artist key|song key": track rating key} for every track, to tell which liked songs you own."""
         out = {}
+        self.songs = {}
         for sec in self.sections():
             sid = sec["key"]
             step(f"Reading Plex: {sec.get('title')}")
@@ -133,6 +159,9 @@ class Plex:
                     al["plays"] += t.get("viewCount") or 0
                 if t.get("userRating"):
                     row["ratings"].append(t["userRating"])
+                sk = song_key(t.get("title"))
+                for ak in credit_keys(row["name"]) | (credit_keys(t["originalTitle"]) if t.get("originalTitle") else frozenset()):
+                    self.songs.setdefault(f"{ak}|{sk}", t.get("ratingKey"))
                 lv = t.get("lastViewedAt")
                 if lv and (not row["last_played"] or lv > row["last_played"]):
                     row["last_played"] = lv
@@ -175,10 +204,13 @@ class Plex:
     def replace_playlist(self, title, rating_keys, machine, old_keys=()):
         """Create an audio playlist holding these albums or tracks, then remove the ones it replaces.
         The new one is made first, so a failure never leaves you with nothing. Returns the new playlist's key."""
-        uri = f"server://{machine}/com.plexapp.plugins.library/library/metadata/{','.join(str(k) for k in rating_keys)}"
-        r = self.s.post(f"{self.url}/playlists", params={"type": "audio", "title": title, "smart": 0, "uri": uri}, timeout=120)
+        keys = [str(k) for k in rating_keys]
+        uri = lambda part: f"server://{machine}/com.plexapp.plugins.library/library/metadata/{','.join(part)}"
+        r = self.s.post(f"{self.url}/playlists", params={"type": "audio", "title": title, "smart": 0, "uri": uri(keys[:200])}, timeout=120)
         r.raise_for_status()
         new = (r.json().get("MediaContainer", {}).get("Metadata") or [{}])[0].get("ratingKey")
+        for i in range(200, len(keys), 200):   # long lists go in batches, so the address stays a sensible length
+            self.s.put(f"{self.url}/playlists/{new}/items", params={"uri": uri(keys[i:i + 200])}, timeout=120).raise_for_status()
         for old in old_keys:
             if new and str(old) != str(new):
                 try:
@@ -387,6 +419,25 @@ class Spotify:
                     add(a["name"], plays=5, saved=True)
             url, params = d.get("next"), {}
         return list(out.values())
+
+    def liked_tracks(self):
+        """Your Liked Songs, newest first: title, every credited artist, and the album it's on."""
+        out, url, params = [], "/me/tracks", {"limit": 50}
+        while url:
+            d = self._get(url, **params)
+            for it in d.get("items", []):
+                t = it.get("track") or {}
+                if not t.get("id") or t.get("is_local"):   # files on your own computer: nothing to look up
+                    continue
+                al = t.get("album") or {}
+                imgs = sorted(al.get("images") or [], key=lambda i: i.get("width") or 0)
+                cover = next((i["url"] for i in imgs if (i.get("width") or 0) >= 250), imgs[-1]["url"] if imgs else None)
+                out.append({"id": t["id"], "title": t.get("name"), "artists": [a["name"] for a in t.get("artists", []) if a.get("name")],
+                            "album": al.get("name"), "album_id": al.get("id"), "album_type": al.get("album_type"),
+                            "album_artist": ((al.get("artists") or [{}])[0]).get("name"), "year": (al.get("release_date") or "")[:4],
+                            "cover": cover, "added_at": it.get("added_at")})
+            url, params = d.get("next"), {}
+        return out
 
 
 def parse_spotify_export(data):
@@ -820,11 +871,41 @@ class Lidarr:
         body = {**a, "qualityProfileId": quality_id, "metadataProfileId": metadata_id, "rootFolderPath": root,
                 "monitored": True, "monitorNewItems": "all" if monitor in ("all", "future") else "none",
                 "addOptions": {"monitor": monitor, "searchForMissingAlbums": search}}
-        r = self.s.post(f"{self.url}/api/v1/artist", json=body, timeout=60)
+        return self._send("post", "/artist", body)
+
+    def _send(self, method, path, body):
+        r = self.s.request(method, f"{self.url}/api/v1{path}", json=body, timeout=60)
+        if r.status_code == 401:
+            raise APIError("Lidarr rejected the API key")
         if r.status_code >= 400:
             try:
-                msg = r.json()[0].get("errorMessage")
+                d = r.json()
+                msg = d[0].get("errorMessage") if isinstance(d, list) else d.get("message")
             except Exception:
                 msg = r.text[:200]
             raise APIError(f"Lidarr: {msg}")
-        return r.json()
+        return r.json() if r.content else {}
+
+    def add_album(self, artist, title, quality_id, metadata_id, root):
+        """Get one album: monitor it and start a search. An artist Lidarr doesn't have yet is added with only this
+        album monitored, so one liked song doesn't pull in a whole discography. Returns the album's title in Lidarr."""
+        want_a, want_t = credit_keys(artist), song_key(title)
+        by_artist = lambda found: [al for al in found if artist_key((al.get("artist") or {}).get("artistName")) in want_a]
+        cands = by_artist(self._get("/album/lookup", term=f"{artist} {title}")) or by_artist(self._get("/album/lookup", term=title))
+        al = (next((x for x in cands if album_key(x.get("title")) == album_key(title)), None)
+              or next((x for x in cands if song_key(x.get("title")) == want_t), None))
+        if not al:
+            raise APIError(f"Lidarr couldn't find {title} by {artist} on MusicBrainz")
+        if al.get("id"):   # Lidarr already knows this album
+            self._send("put", "/album/monitor", {"albumIds": [al["id"]], "monitored": True})
+            self._send("post", "/command", {"name": "AlbumSearch", "albumIds": [al["id"]]})
+            return al.get("title")
+        a = al.get("artist") or {}
+        if not a.get("id"):
+            a = {**a, "qualityProfileId": quality_id, "metadataProfileId": metadata_id, "rootFolderPath": root, "monitored": True,
+                 "monitorNewItems": "none", "addOptions": {"monitor": "none", "searchForMissingAlbums": False}}
+        body = {**al, "artist": a, "monitored": True, "anyReleaseOk": True, "addOptions": {"searchForNewAlbum": True}}
+        if a.get("id"):
+            body["artistId"] = a["id"]
+        self._send("post", "/album", body)
+        return al.get("title")

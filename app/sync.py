@@ -113,6 +113,8 @@ class Syncer:
         albums = [{**a, "artist_key": r["key"], "artist": r["name"]} for r in rows for a in r.pop("album_rows", None) or []]
         db.replace_library(rows)
         db.set_meta("plex_albums", albums)
+        if getattr(plex, "songs", None) is not None:   # every track, to tell which liked songs you own
+            db.set_meta("plex_songs", plex.songs)
         self._step("Plex read", f"{len(rows):,} artists")
         try:
             db.set_meta("plex_sections", {d["key"]: {"title": d.get("title"), "type": d.get("type")} for d in plex.all_sections()})
@@ -123,19 +125,22 @@ class Syncer:
         fetchers = {
             "lastfm": (config.LASTFM_USERNAME, lambda: self.lastfm_factory().user_top_artists(config.LASTFM_USERNAME)),
             "listenbrainz": (config.LISTENBRAINZ_USERNAME, self._listenbrainz),
-            "spotify": (config.SPOTIFY_REFRESH_TOKEN, lambda: Spotify(config.SPOTIFY_CLIENT_ID, config.SPOTIFY_REFRESH_TOKEN,
-                                                                        lambda t: config.save({"SPOTIFY_REFRESH_TOKEN": t})).history()),
+            "spotify": (config.SPOTIFY_REFRESH_TOKEN, self._spotify),
         }
         for src, (enabled, fn) in fetchers.items():
             if self.sources is not None:
                 if src in self.sources:
                     db.replace_history(src, self.sources[src])
+                if src == "spotify" and "spotify_liked" in self.sources:
+                    db.set_meta("spotify_liked", self.sources["spotify_liked"])
                 continue
             if not enabled:
                 if db.history_counts().get(src):   # disconnected since last time: its plays stop shaping picks
                     db.replace_history(src, [])
                     if src == "listenbrainz":
                         db.set_meta("recent_listens", {})
+                if src == "spotify" and db.get_meta("spotify_liked") is not None:
+                    db.set_meta("spotify_liked", None)
                 continue
             self._step(f"Reading {src.title() if src != 'lastfm' else 'Last.fm'}")
             try:
@@ -149,6 +154,16 @@ class Syncer:
                 db.set_meta("lidarr_mbids", {k: v for k, v in mb.items() if v})
             except Exception as e:
                 self._warn(f"Lidarr: {friendly_error(e)}")
+
+    def _spotify(self):
+        """Top, followed and saved artists for your taste, plus your Liked Songs for Liked, not owned."""
+        sp = Spotify(config.SPOTIFY_CLIENT_ID, config.SPOTIFY_REFRESH_TOKEN, lambda t: config.save({"SPOTIFY_REFRESH_TOKEN": t}))
+        rows = sp.history()
+        try:
+            db.set_meta("spotify_liked", sp.liked_tracks())
+        except Exception as e:
+            self._warn(f"Spotify liked songs: {friendly_error(e)}")
+        return rows
 
     def _listenbrainz(self):
         """All-time top artists for your taste, plus the last six months for the recent-listening boost."""
