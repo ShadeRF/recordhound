@@ -95,18 +95,24 @@ function albumCard(a, opt = {}) {
   const k = a.artist_key || "";
   return `<div class="card al" data-key="${esc(k)}" data-name="${esc(a.artist || "")}" tabindex="0">
     <div class="poster">${a.cover ? `<img loading="lazy" src="${esc(a.cover)}" alt="${esc(a.title)}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:this.alt}))">` : `<span>${esc(a.title)}</span>`}</div>
-    ${a.date && a.date > new Date().toISOString().slice(0, 10) ? `<span class="match taste">${esc(fmtDate(a.date))}</span>` : ""}
+    ${upcoming(a.date) ? `<span class="match taste">${esc(fmtDate(a.date))}</span>` : ""}
     <div class="t" title="${esc(a.title)}">${esc(a.title)}</div>
-    <div class="s"><b>${esc(a.artist || "")}</b>${a.date ? " · " + esc(a.date.slice(0, 4)) : ""}${a.type === "ep" ? " · EP" : ""}</div>
+    <div class="s"><b>${esc(a.artist || "")}</b>${a.date && !opt.noYear ? " · " + esc(a.date.slice(0, 4)) : ""}${a.type === "ep" ? " · EP" : ""}</div>
     ${opt.role ? `<div class="why"><div class="lbl">${esc(opt.role)}</div></div>` : ""}</div>`;
 }
+const upcoming = d => !!d && d > new Date().toISOString().slice(0, 10);
 const skeleton = (n = 14) => Array.from({ length: n }, () => `<div class="card sq sk"><div class="poster"></div><div class="t">&nbsp;</div><div class="s">&nbsp;</div></div>`).join("");
 function emptyState() {
   const s = lastStatus;
   if (!s.configured) return `<div class="empty" style="grid-column:1/-1">Connect Plex to get started. <a href="#/settings">Open Settings</a></div>`;
   if (s.running) return `<div class="empty" style="grid-column:1/-1"><b>${esc(s.step || "Working")}</b>${s.progress ? " · " + esc(s.progress) : ""}<br><span class="muted">The first sync looks up every artist, which can take a while. Later syncs are quick.</span></div>`;
+  if (view === "stream" && !hasHistory()) return `<div class="empty" style="grid-column:1/-1">You Stream lists artists you play outside Plex, and no listening history is connected yet.<br><br>
+    <button class="btn primary" data-open-setting="set-history">Open Settings › Listening history</button></div>`;
   return `<div class="empty" style="grid-column:1/-1">Nothing here with these filters.</div>`;
 }
+// any listening outside Plex: ListenBrainz, Spotify, YouTube Music or Last.fm (Plex's own soundtracks row doesn't count)
+const hasHistory = () => Object.entries(lastStatus.history || {}).some(([s, n]) => n && s !== "plex_comp");
+document.addEventListener("click", e => { const b = e.target.closest && e.target.closest("[data-open-setting]"); if (b) { e.preventDefault(); openSetting(b.dataset.openSetting); } });
 
 // ------------------------------------------------------------------ filters (All Picks)
 const blankF = () => ({ q: "", tags: {}, mode: "any", pop: "", sort: "score", seed: "", seedLabel: "", fresh: 0 });
@@ -130,6 +136,7 @@ function syncControls() {
   exc().forEach(t => chips.push(`<span class="achip">not ${esc(t)} <button data-clear-tag="${esc(t)}">×</button></span>`));
   if (chips.length) chips.push(`<button class="link" data-clear="all">Clear all</button>`);
   $("activeRow").innerHTML = chips.join("");
+  filterFade();
 }
 let debounce;
 function changed(now) { saveF(); syncControls(); clearTimeout(debounce); debounce = setTimeout(() => load(true), now ? 0 : 200); }
@@ -224,7 +231,7 @@ async function act(key, action) {
 async function quickHide(key) {
   const r = REG.get(key); if (!(await act(key, "dismissed"))) return;
   removeCards(key);
-  toast(`Hid ${r ? r.name : ""}`, { label: "Undo", fn: async () => { await api("/api/feedback/" + encodeURIComponent(key), { method: "DELETE" }); refreshView(); } });
+  toast(r ? `Not interested in ${r.name}` : "Not interested", { label: "Undo", fn: async () => { await api("/api/feedback/" + encodeURIComponent(key), { method: "DELETE" }); refreshView(); } });
 }
 async function toggleSaved(key) {
   const r = REG.get(key) || current; if (!r) return;
@@ -401,8 +408,7 @@ function renderDrawer(r, loading) {
       <div class="seed" data-open="${esc(x.key)}" style="cursor:pointer">
         <div class="th" style="border-radius:50%;background-image:url('${artURL(x)}')"></div>
         <div class="info"><div class="nm">${esc(x.name)}</div><div class="st">${esc(seedLine(x))}</div>
-          <div class="meter"><i style="width:${Math.round(x.share * 100)}%"></i></div></div>
-        <div class="pct">${Math.round(x.share * 100)}%</div></div>`).join("")}</div>
+          <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(x.share * 100)}" aria-label="How much this pushed the pick" title="How much this pushed the pick"><i style="width:${Math.round(x.share * 100)}%"></i></div></div></div>`).join("")}</div>
       ${r.seed_count > b.length ? `<div class="more-seeds">+ ${r.seed_count - b.length} more of your artists point here too</div>` : ""}</div>` : ""}
     ${srcs.length ? `<div class="sec"><h4>Your listening</h4><div class="srcs">${srcs.map(([s, v]) => `<span><img src="${fav((SRC[s] || [s])[0])}" alt="">${esc((SRC[s] || [, s])[1])}${v.plays && s !== "spotify" ? ` · ${fmtN(v.plays)} plays` : ""}${v.rank ? ` · #${v.rank}` : ""}${v.saved ? " · followed" : ""}</span>`).join("")}</div></div>` : ""}
     ${(r.matches || []).length ? `<div class="sec"><h4>Matches your taste</h4><div class="chips">${r.matches.map(t => `<a href="#/picks" data-tagdrill="${esc(t)}">${esc(t)}</a>`).join("")}</div></div>` : ""}
@@ -434,9 +440,9 @@ function showAlbum(i) {
       <div class="albacts">
         ${plex ? `<a class="btn primary" href="${plex}" target="_blank" rel="noopener"><img class="svc" src="${fav("plex.tv")}" alt="">Open in Plex</a>` : ""}
         ${lastStatus.lidarr && !a.owned ? `<button class="btn primary" data-alb-lidarr>${ICON.plus}Add album to Lidarr</button>` : ""}
-        ${lastStatus.spotify_play ? `<button class="btn lk-sp" data-alb-spotify>${ICON.play}Play album on Spotify</button>` : ""}
-        ${a.id ? `<a class="btn" href="https://www.deezer.com/album/${encodeURIComponent(a.id)}" target="_blank" rel="noopener"><img class="svc" src="${fav("deezer.com")}" alt="">Deezer</a>` : ""}
-        <a class="btn" href="https://open.spotify.com/search/${q}" target="_blank" rel="noopener"><img class="svc" src="${fav("spotify.com")}" alt="">Spotify</a></div>
+        ${lastStatus.spotify_play ? `<button class="btn lk-sp" data-alb-spotify>${ICON.play}Play album on Spotify</button>`
+          : `<a class="btn" href="https://open.spotify.com/search/${q}" target="_blank" rel="noopener" data-alb-open-spotify><img class="svc" src="${fav("spotify.com")}" alt="">Open in Spotify</a>`}
+        ${a.id ? `<a class="btn" href="https://www.deezer.com/album/${encodeURIComponent(a.id)}" target="_blank" rel="noopener"><img class="svc" src="${fav("deezer.com")}" alt="">Deezer</a>` : ""}</div>
       <div class="albl" hidden></div></div>
     <div class="atracks" id="albTracks">${a.id ? `<div class="shimmer" style="height:120px"></div>` : ""}</div>`;
   box.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -518,7 +524,7 @@ $("drawer").addEventListener("click", async e => {
     const r = current, action = a.dataset.act;
     if (!(await act(r.key, action))) return;
     closeDrawer(); removeCards(r.key);
-    toast(action === "known" ? `Got it, you already know ${r.name}` : `Hid ${r.name}`, { label: "Undo", fn: async () => { await api("/api/feedback/" + encodeURIComponent(r.key), { method: "DELETE" }); refreshView(); } });
+    toast(action === "known" ? `Got it, you already know ${r.name}` : `Not interested in ${r.name}`, { label: "Undo", fn: async () => { await api("/api/feedback/" + encodeURIComponent(r.key), { method: "DELETE" }); refreshView(); } });
   }
 });
 $("drawer").addEventListener("change", async e => {
@@ -606,7 +612,7 @@ async function loadSaved() {
   d.items.forEach(r => SAVED.add(r.key));
   const want = d.items.filter(r => !r.owned), got = d.items.filter(r => r.owned);
   listShell("Saved for later", want.length ? `${want.length} artist${want.length === 1 ? "" : "s"}` : "",
-    want.length ? gridOf(want) : `<div class="empty">Nothing saved yet. Hover any artist and tap the heart.</div>`);
+    want.length ? gridOf(want) : `<div class="empty">Nothing saved yet. Tap ♡ on any artist to save it.</div>`);
   if (got.length) $("listBody").insertAdjacentHTML("beforeend", `<h3 class="list-sub" style="font:600 18px Georgia,serif;margin:30px 0 12px">Now in your library</h3>${gridOf(got)}`);
 }
 async function runSearch(q) {
@@ -634,10 +640,10 @@ async function loadGaps() {
   listShell("Albums you're missing", "", `<div class="grid">${skeleton(8)}</div>`);
   const my = ++listSeq; let d; try { d = await api("/api/gaps"); } catch (e) { if (my === listSeq) listShell("Albums you're missing", esc(e.message), ""); return; }
   if (my !== listSeq) return;   // you've moved on to another page since
-  const what = ["studio albums", d.eps ? "EPs" : "", d.special ? "remix, live and acoustic releases" : ""].filter(Boolean);
+  const what = ["albums", d.eps ? "EPs" : "", d.special ? "remixes, live albums, compilations and reissues" : ""].filter(Boolean);
   const opts = `<div class="lib-tools gap-opts"><label class="inline"><input type="checkbox" data-gap-opt="GAPS_EPS" ${d.eps ? "checked" : ""}> EPs</label>
-    <label class="inline"><input type="checkbox" data-gap-opt="GAPS_SPECIAL" ${d.special ? "checked" : ""}> Remix, instrumental, live and acoustic releases</label></div>`;
-  listShell("Albums you're missing", `${what.length > 1 ? what.slice(0, -1).join(", ") + " and " + what.at(-1) : "Studio albums"} from artists you already collect, most popular first.`.replace(/^./, c => c.toUpperCase()),
+    <label class="inline"><input type="checkbox" data-gap-opt="GAPS_SPECIAL" ${d.special ? "checked" : ""}> Remixes, live albums, compilations and reissues</label></div>`;
+  listShell("Albums you're missing", `${what.length > 1 ? what.slice(0, -1).join(", ") + " and " + what.at(-1) : "Albums"} from artists you already collect, most popular first.`.replace(/^./, c => c.toUpperCase()),
     d.groups.length ? d.groups.map(g => `<div class="gap"><div class="gap-head" data-open-artist="${esc(g.key)}">
         <span class="gap-ph" style="background-image:url('${esc(g.picture || "")}')"></span>
         <div><h3>${esc(g.name)}</h3><div class="muted">You have ${g.owned} of ${g.total}</div><div class="meter"><i style="width:${Math.round(g.owned / g.total * 100)}%"></i></div></div></div>
@@ -653,25 +659,29 @@ async function loadReleases() {
   const my = ++listSeq; let d; try { d = await api("/api/releases"); } catch (e) { if (my === listSeq) listShell("New from artists you love", esc(e.message), ""); return; }
   if (my !== listSeq) return;   // you've moved on to another page since
   listShell("New from artists you love", "Albums and EPs from the last four months, plus anything announced.",
-    d.items.length ? `<div class="grid" data-list>${d.items.map(a => albumCard(a, { role: fmtDate(a.date) })).join("")}</div>` : `<div class="empty">${d.at ? "Nothing new yet." : "This fills in after your next full sync."}</div>`);
+    d.items.length ? `<div class="grid" data-list>${d.items.map(a => albumCard(a, { role: upcoming(a.date) ? "" : fmtDate(a.date), noYear: true })).join("")}</div>` : `<div class="empty">${d.at ? "Nothing new yet." : "This fills in after your next full sync."}</div>`);
 }
 
 let libItems = [], libTotal = 0, libQ = "", libTimer = null;
+// 25, 50, 100, 250, but never more than there are: 60 albums gives 25, 50 and "All 60"
+const sizeChoices = total => [...[25, 50, 100, 250].filter(n => n < total), ...(total <= 250 ? [total] : [])].filter(n => n > 0);
 async function loadLibrary(more, typing) {
   if (!more) { libItems = []; if (!typing) listShell("Your Library", "", `<div class="grid">${skeleton(10)}</div>`); }
   const my = ++listSeq; let d; try { d = await api(`/api/library?offset=${libItems.length}&limit=120&q=${encodeURIComponent(libQ)}`); } catch (e) { if (my === listSeq) listShell("Your Library", esc(e.message), ""); return; }
   if (my !== listSeq) return;   // you've moved on to another page since
   libItems = libItems.concat(d.items); libTotal = d.total;
   const box = $("libQ"), typed = box ? box.value : libQ, focused = box && document.activeElement === box, size = $("libN") && $("libN").value;
-  const tools = `<div class="lib-tools"><input type="search" id="libQ" placeholder="Filter by album or artist" value="${esc(typed)}">
-    <select id="libN"><option>25</option><option selected>50</option><option>100</option></select>
-    <button class="btn primary" id="libPl" ${libTotal ? "" : "disabled"}>Make Plex playlist</button></div>`;
-  listShell("Your Library", libTotal ? `${libTotal.toLocaleString()} albums you own but have never played, best for you first. The playlist takes the top ones and replaces the one made last time.` : "",
-    libItems.length ? `<div class="grid" data-list>${libItems.map(a => albumCard(a, { role: a.why })).join("")}</div>
+  const all = d.all ?? libTotal, sizes = sizeChoices(all);
+  const tools = `<div class="lib-tools"><input type="search" id="libQ" placeholder="Filter by album or artist" value="${esc(typed)}" aria-label="Filter albums">
+    <label class="lk-sort">Playlist size <select id="libN" ${all ? "" : "disabled"}>${sizes.map(n => `<option value="${n}" ${n === Math.min(50, all) ? "selected" : ""}>${n === all ? `All ${n}` : n}</option>`).join("")}</select></label>
+    <button class="btn primary" id="libPl" ${all ? "" : "disabled"} title="Takes the top albums and replaces the playlist made last time">Make Plex playlist</button></div>`;
+  listShell("Your Library", all ? `${all.toLocaleString()} album${all === 1 ? "" : "s"} you own but have never played, best for you first.` : "",
+    (libQ && all ? `<p class="count">${libTotal.toLocaleString()} match${libTotal === 1 ? "es" : ""} these filters</p>` : "") +
+    (libItems.length ? `<div class="grid" data-list>${libItems.map(a => albumCard(a, { role: a.why })).join("")}</div>
       ${libItems.length < libTotal ? `<div style="text-align:center;margin:24px"><button class="btn" id="libMore">Show more</button></div>` : ""}`
-      : `<div class="empty">${libQ ? "No unplayed albums match." : lastStatus.last_sync ? "You've played every album you own. Impressive." : "This fills in after your next full sync."}</div>`, tools);
+      : `<div class="empty">${libQ ? "No unplayed albums match." : lastStatus.last_sync ? "You've played every album you own. Impressive." : "This fills in after your next full sync."}</div>`), tools);
   if ($("libMore")) $("libMore").onclick = () => loadLibrary(true);
-  if (size) $("libN").value = size;
+  if (size && sizes.includes(+size)) $("libN").value = size;
   if (focused) { const q = $("libQ"); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
   $("libQ").oninput = e => { clearTimeout(libTimer); libTimer = setTimeout(() => { libQ = e.target.value.trim(); loadLibrary(false, true); }, 250); };
   $("libPl").onclick = async () => {
@@ -724,7 +734,10 @@ function likedItems() {
 }
 const likedHead = g => `<div class="lk-ahead" data-lk-head="${esc(g.artist_key)}" data-name="${esc(g.artist)}" tabindex="0" title="Open ${esc(g.artist)}">
   <b>${esc(g.artist)}</b><small>${g.songs.length} song${g.songs.length === 1 ? "" : "s"}${g.albums.length > 1 ? ` · ${g.albums.length} releases` : ""}</small></div>`;
-const likedItem = x => x.head ? likedHead(x.head) : x.s ? likedSongRow(x.s) : likedRow(x.a);
+const likedItem = x => x.head ? likedHead(x.head) : x.s ? likedSongRow(x.s, LK.group === "artist") : likedRow(x.a);
+// what Lidarr gets asked for, the same on song and album rows
+const lidarrWhat = a => ({ single: "single", ep: "EP" }[a.type] || "album");
+const lidarrBtn = a => !lastStatus.lidarr ? "" : a.requested ? `<span class="pill on">✓ Sent to Lidarr</span>` : `<button class="btn primary" data-lk-lidarr>${ICON.plus}Add ${lidarrWhat(a)} to Lidarr</button>`;
 const likedDay = iso => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""; };
 // Opens that exact song or album in the Spotify app. The link itself is the web player's address, so Ctrl-click,
 // middle-click and "copy link" still work, and it's offered as a fallback when no app answers.
@@ -756,15 +769,15 @@ function openSpotifyApp(app, web) {
     if (!left) toast("Didn't open? The Spotify app may not be installed here.", { label: "Open in web player", fn: () => window.open(web, "_blank", "noopener") });
   }, 2500);
 }
-function likedSongRow(s) {
-  const a = s.a, lid = lastStatus.lidarr, same = (s.album || "").toLowerCase() === (s.title || "").toLowerCase();
+function likedSongRow(s, underArtist) {   // underArtist: the row sits under its artist's heading, so the name isn't repeated
+  const a = s.a, same = (s.album || "").toLowerCase() === (s.title || "").toLowerCase();
   return `<div class="lk-row" data-lk="${esc(a.id)}" ${s.id ? `data-song="${esc(s.id)}"` : ""} tabindex="0" title="Open ${esc(a.artist || "")}">
     ${a.cover ? `<img class="lk-cover" loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="lk-cover"></div>`}
     <div class="lk-main"><div class="lk-t">${esc(s.title || "")}</div>
-      <div class="lk-s"><span class="lk-a">${esc(a.artist || "")}</span> · ${a.type === "single" && same ? "Single" : `from <i class="lk-from">${esc(s.album || "")}</i>${a.type === "single" ? " (single)" : a.type === "ep" ? " (EP)" : ""}`}${a.year ? " · " + esc(a.year) : ""}${s.single ? ` <span class="lk-was" title="You liked the single “${esc(s.single)}”">· first out as a single</span>` : ""}</div>
+      <div class="lk-s">${underArtist ? "" : `<span class="lk-a">${esc(a.artist || "")}</span> · `}${a.type === "single" && same ? "Single" : `from <i class="lk-from">${esc(s.album || "")}</i>${a.type === "single" ? " (single)" : a.type === "ep" ? " (EP)" : ""}`}${a.year ? " · " + esc(a.year) : ""}${s.single ? ` <span class="lk-was" title="You liked the single “${esc(s.single)}”">· first out as a single</span>` : ""}</div>
       ${s.added_at ? `<div class="lk-when"><span class="lk-heart" aria-label="Liked">♥</span> ${esc(likedDay(s.added_at))}</div>` : ""}</div>
-    <div class="lk-act">${spotifyLink("track", s.id)}${!lid ? "" : a.requested ? `<span class="pill on">✓ Sent to Lidarr</span>` : `<button class="btn primary" data-lk-lidarr>${ICON.plus}Add ${a.type === "single" ? "single" : "album"} to Lidarr</button>`}
-      <button class="btn" data-lk-hide>Hide</button></div>
+    <div class="lk-act">${spotifyLink("track", s.id)}${lidarrBtn(a)}
+      <button class="btn" data-lk-hide>${s.id ? "Hide song" : "Hide album"}</button></div>
     <div class="lk-box" hidden></div></div>`;
 }
 const LIKED_PAGE = 60;
@@ -779,14 +792,13 @@ async function loadLiked() {
   liked = d; renderLiked();
 }
 function likedRow(a) {
-  const lid = lastStatus.lidarr;
   return `<div class="lk-row" data-lk="${esc(a.id)}" tabindex="0" title="Open ${esc(a.artist || "")}">
     ${a.cover ? `<img class="lk-cover" loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="lk-cover"></div>`}
     <div class="lk-main"><div class="lk-kind">${{ single: "Single", ep: "EP", compilation: "Compilation" }[a.type] || "Album"}</div><div class="lk-t">${esc(a.title || "")}</div>
       <div class="lk-s"><span class="lk-a">${esc(a.artist || "")}</span>${a.year ? " · " + esc(a.year) : ""}${a.linked ? ` <span class="lk-was">· you liked singles from it</span>` : ""}</div>
       <div class="lk-songs"><span class="lk-heart" aria-label="Liked">♥</span> <span class="lk-lbl">You liked:</span> ${a.songs.map(esc).join(" · ")}</div></div>
-    <div class="lk-act">${spotifyLink("album", a.id)}${!lid ? "" : a.requested ? `<span class="pill on">✓ Sent to Lidarr</span>` : `<button class="btn primary" data-lk-lidarr>${ICON.plus}Add album to Lidarr</button>`}
-      <button class="btn" data-lk-hide>Hide</button></div>
+    <div class="lk-act">${spotifyLink("album", a.id)}${lidarrBtn(a)}
+      <button class="btn" data-lk-hide>Hide album</button></div>
     <div class="lk-box" hidden></div></div>`;
 }
 function renderLiked() {
@@ -804,8 +816,8 @@ function renderLiked() {
   const bar = `<div class="lk-bar">
       <input type="search" id="lkQ" placeholder="Filter by artist, album or song" value="${esc(likedQ)}" aria-label="Filter liked songs">
       <label class="lk-sort">Sort <select id="lkSort">${Object.entries(LK_SORTS).map(([k, [l]]) => `<option value="${k}" ${k === LK.sort ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-      <span class="lk-sort">Group</span><span class="seg" id="lkGroup" role="group" aria-label="Group by">${[["none", "None"], ["album", "Album"], ["artist", "Artist"]].map(([k, l]) =>
-        `<button data-lk-group="${k}" class="${LK.group === k ? "on" : ""}" aria-pressed="${LK.group === k}">${l}</button>`).join("")}</span>
+      <span class="lk-grp"><span class="lk-sort">Group</span><span class="seg" id="lkGroup" role="group" aria-label="Group by">${[["none", "None"], ["album", "Album"], ["artist", "Artist"]].map(([k, l]) =>
+        `<button data-lk-group="${k}" class="${LK.group === k ? "on" : ""}" aria-pressed="${LK.group === k}">${l}</button>`).join("")}</span></span>
       <span class="muted" id="lkCount"></span></div>`;
   listShell(LIKED_TITLE, sub, d.albums.length ? `${bar}<div class="lk-list" id="lkList"></div><div id="lkEnd"></div>`
     : `<div class="empty">${d.total ? "You own every song you've liked on Spotify." : "No liked songs on Spotify yet."}</div>`, tools);
@@ -861,7 +873,7 @@ $("listBody").addEventListener("click", async e => {
       if (!a.tracks.length) liked.albums = liked.albums.filter(x => x !== a);
     } else { liked.albums = liked.albums.filter(x => x !== a); liked.hidden += a.songs.length; }
     renderLiked();
-    toast(`Hid ${t ? t.title : a.title}`, { label: "Undo", fn: async () => { try { await likedHide(t ? song : id, false); } catch (err) { toast(err.message); return; } loadLiked(); } });
+    toast(t ? `Hid the song “${t.title}”` : `Hid the album “${a.title}”`, { label: "Undo", fn: async () => { try { await likedHide(t ? song : id, false); } catch (err) { toast(err.message); return; } loadLiked(); } });
     return;
   }
   if (e.target.closest("[data-lk-lidarr]")) {
@@ -875,7 +887,8 @@ $("listBody").addEventListener("click", async e => {
     add.disabled = true;
     try {
       const r = await api("/api/liked/lidarr", { method: "POST", body: JSON.stringify({ id, ...albumLidarrChoice(row) }) });
-      a.requested = true; row.outerHTML = likedRow(a); toast(`Lidarr is looking for ${r.title || a.title}`);
+      a.requested = true; row.querySelector(".lk-box").hidden = true;
+      row.querySelector("[data-lk-lidarr]")?.insertAdjacentHTML("beforebegin", lidarrBtn(a)); row.querySelector("[data-lk-lidarr]")?.remove(); toast(`Lidarr is looking for ${r.title || a.title}`);
     } catch (err) { toast(err.message); add.disabled = false; }
   }
 });
@@ -902,8 +915,8 @@ function rateShell(inner) {
       <span class="muted">${rateDone ? `${rateDone} rated this session` : ""}</span>
     </div>
     <p class="muted rate-help">${rateMode === "library"
-      ? "Ratings are the strongest signal Recordhound has, and they're saved to the artist in Plex too. Click the left half of a star for a half star. Keys: <kbd>1</kbd>–<kbd>5</kbd> to rate (hold <kbd>Shift</kbd> for a half star: <kbd>Shift</kbd>+<kbd>4</kbd> is 3½), <kbd>S</kbd> to skip."
-      : "Already know some of these? Rate them and they stop showing up as picks, and the rest get better. Keys: <kbd>1</kbd>–<kbd>5</kbd> rate (<kbd>Shift</kbd> for a half star), <kbd>N</kbd> never heard of them, <kbd>K</kbd> know them, no rating, <kbd>X</kbd> not for me."}</p>
+      ? `Ratings are the strongest signal Recordhound has, and they're saved to the artist in Plex too. <span class="mouse">Click</span><span class="touch">Tap</span> the left half of a star for a half star. <span class="keys">Keys: <kbd>1</kbd>–<kbd>5</kbd> to rate (hold <kbd>Shift</kbd> for a half star: <kbd>Shift</kbd>+<kbd>4</kbd> is 3½), <kbd>S</kbd> to skip.</span>`
+      : `Already know some of these? Rate them and they stop showing up as picks, and the rest get better. <span class="mouse">Click</span><span class="touch">Tap</span> the left half of a star for a half star. <span class="keys">Keys: <kbd>1</kbd>–<kbd>5</kbd> to rate (<kbd>Shift</kbd> for a half star), <kbd>N</kbd> never heard of them, <kbd>K</kbd> already know them, no rating, <kbd>X</kbd> not interested.</span>`}</p>
     ${inner}</div>`;
 }
 function rateMeta(r) {
@@ -933,7 +946,7 @@ function renderRate() {
         <div class="rate-stars">${starsWidget(0, 'id="rateStars"')}</div>
         <div class="rate-actions">
           ${rateMode === "library" ? `<button class="btn" data-ra="skip">Skip <kbd>S</kbd></button>`
-            : `<button class="btn" data-ra="skip">Never heard of them <kbd>N</kbd></button><button class="btn" data-ra="known">Know them, no rating <kbd>K</kbd></button><button class="btn" data-ra="hide">${ICON.hide}Not for me <kbd>X</kbd></button>`}
+            : `<button class="btn" data-ra="skip">Never heard of them <kbd>N</kbd></button><button class="btn" data-ra="known" title="Already know them, no rating">Already know them <kbd>K</kbd></button><button class="btn" data-ra="hide">${ICON.hide}Not interested <kbd>X</kbd></button>`}
           <button class="btn" data-ra-open>More about them</button>
         </div>
         ${rateRemaining > 1 ? `<div class="rate-next"><span class="muted">Up next</span>${next}${rateMode === "library" ? `<span class="muted">${(rateRemaining - 1).toLocaleString()} more</span>` : ""}</div>` : ""}
@@ -980,19 +993,30 @@ document.addEventListener("keydown", e => {
 });
 
 // ------------------------------------------------------------------ history (hidden / known / liked / added)
-const HIST = { dismissed: "Not interested", known: "Already know", liked: "Liked", added: "Sent to Lidarr" };
+const HIST = {
+  dismissed: ["Not interested", "Hidden from your picks, and similar artists get nudged down. Undo brings one back."],
+  known: ["Already know them", "They stop showing up as picks. The ones you rated here also shape your taste."],
+  liked: ["Liked", "Artists you liked here. They shape your picks."],
+  added: ["Sent to Lidarr", "Artists you added to Lidarr from Recordhound."],
+};
 let histTab = "dismissed", histItems = [];
 async function loadHistory() {
   try { histItems = (await api("/api/feedback")).items; } catch (e) { $("hiddenGrid").innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  renderHistory();
+}
+function renderHistory() {
   const counts = {}; histItems.forEach(x => counts[x.action] = (counts[x.action] || 0) + 1);
-  $("pills").innerHTML = Object.entries(HIST).map(([k, l]) => `<button class="${histTab === k ? "on" : ""}" data-ht="${k}">${l} <small>${counts[k] || 0}</small></button>`).join("");
-  const list = histItems.filter(x => x.action === histTab);
+  $("pills").innerHTML = Object.entries(HIST).map(([k, [l]]) => `<button class="${histTab === k ? "on" : ""}" data-ht="${k}">${l} <small>${counts[k] || 0}</small></button>`).join("");
+  $("hiddenNote").textContent = HIST[histTab][1];
+  const q = $("histQ").value.trim().toLowerCase();
+  const list = histItems.filter(x => x.action === histTab && (!q || (x.name || "").toLowerCase().includes(q)));
   $("hiddenGrid").innerHTML = list.length ? list.map(x => `<div class="hcard" data-key="${esc(x.key)}">
       <div class="poster" style="aspect-ratio:1;border-radius:50%;overflow:hidden;padding:0"><img loading="lazy" src="${artURL(x)}" alt="" onerror="this.remove()" style="width:100%;height:100%;object-fit:cover"></div>
       <div class="t">${esc(x.name)}</div><div class="s">${new Date(x.at * 1000).toLocaleDateString()}${x.rating ? ` · <span class="gold">${starText(x.rating)}</span>` : ""}</div>
-      <button class="btn sm" data-undo="${esc(x.key)}">${histTab === "added" ? "Forget" : "Undo"}</button></div>`).join("") : `<div class="empty">Nothing here.</div>`;
+      <button class="btn sm" data-undo="${esc(x.key)}">${histTab === "added" ? "Forget" : "Undo"}</button></div>`).join("") : `<div class="empty">Nothing here yet.</div>`;
 }
-$("pills").onclick = e => { const b = e.target.closest("[data-ht]"); if (b) { histTab = b.dataset.ht; loadHistory(); } };
+$("pills").onclick = e => { const b = e.target.closest("[data-ht]"); if (b) { histTab = b.dataset.ht; renderHistory(); } };
+$("histQ").oninput = () => renderHistory();
 $("hiddenGrid").onclick = async e => {
   const u = e.target.closest("[data-undo]");
   if (u) {
@@ -1016,7 +1040,8 @@ const advanced = (id, body) => `<details class="adv" data-fold="${id}" ${openCar
 const spDirect = u => { try { const x = new URL(u); return x.origin === location.origin && x.pathname === new URL("./callback", location.href).pathname; } catch { return false; } };
 const openFor = id => { openCards.add(id); const d = document.querySelector(`#settingsBody [data-fold="${id}"]`); if (d) d.open = true; };
 let setSpy = null;
-const headerOffset = () => (document.querySelector("header")?.offsetHeight || 60) + 16;
+// the full header, even while it's tucked away on a phone (it comes back when you scroll up)
+const headerOffset = () => (parseFloat(document.body.style.getPropertyValue("--hdr")) || document.querySelector("header")?.offsetHeight || 60) + 16;
 function setLayout(sections) {   // sections: [[id, menu label, html], …]
   const nav = `<nav class="setnav" id="setnav">${sections.map(([id, label]) => `<button type="button" data-jump="${id}">${label}</button>`).join("")}
     <p class="setnav-note">Changes to fields are saved with the bar at the bottom. Buttons act right away.</p></nav>`;
@@ -1109,6 +1134,11 @@ function ytCard() {
     <p class="help">Only plays in YouTube Music count, not regular YouTube videos. Takeout doesn't say how long you listened, so every play counts as one.
       A newer upload replaces the last one. To keep your plays counting as you go, use ListenBrainz above.</p>`);
 }
+// What "Don't learn from" leaves out right now, in one line
+function nsSummary() {
+  const out = [...(val("NOSEED_LIBRARIES") || []).map(l => `the ${l} library`), ...(val("COMP_TASTE") ? [] : ["soundtracks & compilations"]), ...(val("NOSEED_TAGS") || [])];
+  return out.length ? `<b>Left out:</b> ${out.map(esc).join(", ")}` : "Nothing is left out yet.";
+}
 function svcCard(id, status) {
   const c = SVC[id];
   const set = !!((!c.url || val(c.url)) && (c.key ? val(c.key) : val(c.user)));
@@ -1116,7 +1146,7 @@ function svcCard(id, status) {
   const body = `${c.url ? `<div class="field"><label>URL ${srcTag(c.url)}</label>${input(c.url, "text", "http://")}${c.urlHelp ? `<div class="help">${c.urlHelp}</div>` : ""}</div>` : ""}
     ${c.key ? `<div class="field"><label>${c.keyLabel} ${srcTag(c.key)}</label>${input(c.key)}${c.keyHelp ? `<div class="help">${c.keyHelp}</div>` : ""}</div>` : ""}
     ${c.user ? `<div class="field"><label>Username ${srcTag(c.user)}</label>${input(c.user, "text", "your username")}${c.userHelp ? `<div class="help">${c.userHelp}</div>` : ""}</div>` : ""}
-    <div class="testrow"><button class="btn" data-test="${id}">Test</button><span class="tres" id="tres-${id}"></span></div>
+    <div class="testrow"><button class="btn" data-test="${id}">Test connection</button><span class="tres" id="tres-${id}"></span></div>
     ${id === "plex" ? `<div id="plexLibs"></div>` : ""}`;
   // Every connection folds the same way. A card opens by itself when it needs attention:
   // a required one that isn't set up, or any whose last test failed.
@@ -1164,10 +1194,10 @@ function renderSettings() {
       <p class="sub">Keeps your top artists, followed artists and saved albums up to date on every sync. Spotify only allows this through a personal developer app, which needs Spotify Premium and works for up to 5 people.</p>
       ${spConnected ? `<p>✓ Connected${spAge != null ? ` ${spAge} day${spAge === 1 ? "" : "s"} ago` : ""}. ${S.stats.history.spotify ? `${S.stats.history.spotify} artists.` : ""}
           ${S.spotify_can_play === false ? `<b>Reconnect once so play buttons can start songs in your Spotify app.</b>` : ""}</p>
-        <label class="inline" style="margin:8px 0 2px"><input type="checkbox" data-k="SPOTIFY_PLAY" ${val("SPOTIFY_PLAY") ? "checked" : ""}> Play buttons play the full song in Spotify ${srcTag("SPOTIFY_PLAY")}</label>
-        <p class="help" style="margin:0 0 8px 24px">On the Spotify app you're using, or your computer's. Songs that aren't on Spotify, or times no Spotify app is open, get the 30-second preview. Turn it off to always hear previews.</p><p>
+        <div class="opt"><label class="inline"><input type="checkbox" data-k="SPOTIFY_PLAY" ${val("SPOTIFY_PLAY") ? "checked" : ""}> Play buttons play the full song in Spotify ${srcTag("SPOTIFY_PLAY")}</label>
+          <p class="help">On the Spotify app you're using, or your computer's. Songs that aren't on Spotify, or times no Spotify app is open, get the 30-second preview. Turn it off to always hear previews.</p></div><p>
           ${spAge != null && spAge > 160 ? `<b>Spotify ends connections after six months, so reconnect soon.</b>` : ""}</p>
-        <div class="filerow"><button class="btn" data-test="spotify">Test</button><button class="btn" id="spReconnect">Reconnect</button><button class="btn warn" id="spDisconnect">Disconnect</button><span class="tres" id="tres-spotify"></span></div>
+        <div class="filerow"><button class="btn" data-test="spotify">Test connection</button><button class="btn" id="spReconnect">Reconnect</button><button class="btn warn" id="spDisconnect">Disconnect</button><span class="tres" id="tres-spotify"></span></div>
         ${spPaste ? "" : `<p class="help"><button class="link accent" id="spPasteShow">Didn't come back after reconnecting? Paste the address instead</button></p>${spPasteBox}`}${spOld}`
       : `<ol class="spotify-steps">
           <li>Go to <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a> and create an app (any name). Tick <b>Web API</b>.</li>
@@ -1188,16 +1218,16 @@ function renderSettings() {
     ["taste", "Your taste", setSection("taste", "Your taste", `<div class="scard">
       ${rangeField("OWNED_WEIGHT", "Artists you own but rarely play", 0, 1, 0.05, "How much your collection shapes your taste even when you haven't played it. Keep it high if your library is curated.", pct)}
       ${rangeField("RECENT_WEIGHT", "What you've played lately", 0, 1.5, 0.1, "Extra pull for artists you've played in the last six months (Plex, plus ListenBrainz if connected). Raise it to follow what you're into now; 0 treats all listening the same.", pct)}
-      ${rangeField("MIN_PLAYS", "Plays before outside listening counts", 1, 20, 1, "Artists you've played fewer times than this on Spotify, YouTube Music, ListenBrainz or Last.fm don't shape your picks or show up under You Stream, so checking someone out once doesn't count. Spotify history files count listening time, so ten quick skips add up to less than one play each. Plays in Plex always count.")}
-      <h4>Soundtracks and compilations</h4>
-      <p class="sub">Albums credited to Various Artists, Original Soundtrack and the like. Scores credited to a composer, like John Williams, count as that composer's albums either way.</p>
-      <label class="inline" style="margin:4px 0"><input type="checkbox" data-k="COMP_TASTE" ${val("COMP_TASTE") ? "checked" : ""}> Plays of their songs count toward the artists who sang them ${srcTag("COMP_TASTE")}</label>
-      <label class="inline" style="margin:4px 0 8px"><input type="checkbox" data-k="COMP_LIBRARY" ${val("COMP_LIBRARY") ? "checked" : ""}> Your Library includes the ones you haven't played ${srcTag("COMP_LIBRARY")}</label>
+      ${rangeField("MIN_PLAYS", "Plays before outside listening counts", 1, 20, 1, "Artists you've played fewer times than this in your Spotify history file, YouTube Music, ListenBrainz or Last.fm don't shape your picks or show up under You Stream. Plays in Plex and your connected Spotify account always count.")}
       <h4>Don't learn from</h4>
-      <p class="sub">These stay in your library but stop shaping your picks.</p>
-      <div class="field"><label>Plex libraries</label><div id="noseedLibs" class="chips pick"><span class="muted">Sync once to list your libraries.</span></div></div>
-      <div class="field"><label>Genres</label><div class="chips pick">${NOSEED_TAG_LIST.map(t => `<button type="button" data-nst="${esc(t)}" class="${(val("NOSEED_TAGS") || []).includes(t) ? "on" : ""}">${esc(t)}</button>`).join("")}</div></div>
-      <div class="field"><label>Single artists</label><div id="noseedArtists"><span class="muted">None. Open any artist you own and tick <b>Don't learn from this artist</b>.</span></div></div>
+      <p class="sub">Tick anything that shouldn't shape your picks. It stays in your library.</p>
+      <p class="ns-sum" id="nsSum">${nsSummary()}</p>
+      <div class="field"><label>Libraries to leave out</label><div id="noseedLibs" class="chips pick"><span class="muted">Sync once to list your libraries.</span></div></div>
+      <div class="field"><label>Albums to leave out</label><div><div class="chips pick"><button type="button" data-nocomp class="${val("COMP_TASTE") ? "" : "on"}">Soundtracks &amp; compilations</button></div>
+        <div class="help">Albums credited to Various Artists, Original Soundtrack and the like. Normally a song you play from one counts for the artist who sang it.</div></div></div>
+      <div class="field"><label>Genres to leave out</label><div><div class="chips pick">${NOSEED_TAG_LIST.map(t => `<button type="button" data-nst="${esc(t)}" class="${(val("NOSEED_TAGS") || []).includes(t) ? "on" : ""}">${esc(t)}</button>`).join("")}</div>
+        <div class="help">Artists tagged with these, wherever their albums are. "soundtrack" covers score composers like John Williams and Hans Zimmer.</div></div></div>
+      <div class="field"><label>Artists left out</label><div id="noseedArtists"><span class="muted">None. Open any artist you own and tick <b>Don't learn from this artist</b>.</span></div></div>
     </div>`, "Star ratings count most, then how much you play an artist anywhere, then what you own. These settings adjust the rest.")],
     ["picks", "Picks", setSection("picks", "Picks", `<div class="scard">
       ${lastStatus.artist_source === "lastfm"
@@ -1208,6 +1238,9 @@ function renderSettings() {
         ${rangeField("CANDIDATE_POOL", "Candidates to score", 200, 5000, 100, "Each new candidate costs a few lookups the first time (then it's cached for a month).")}`)}
     </div>`)],
     ["plex", "Plex", setSection("plex", "Plex", `<div class="scard">
+      <h4>Your Library</h4>
+      <div class="opt"><label class="inline"><input type="checkbox" data-k="COMP_LIBRARY" ${val("COMP_LIBRARY") ? "checked" : ""}> Include soundtracks and compilations ${srcTag("COMP_LIBRARY")}</label>
+        <p class="help">Your Library lists albums you own but have never played. Untick this to leave out Various Artists albums and soundtracks.</p></div>
       <div class="field"><label>Playlist name ${srcTag("PLEX_PLAYLIST")}</label>${input("PLEX_PLAYLIST")}
         <div class="help">Used by <b>Make Plex playlist</b> on the Your Library page. Recordhound replaces this playlist each time.</div></div>
     </div>`, "Your Plex server connection and libraries are under Connections.")],
@@ -1218,11 +1251,12 @@ function renderSettings() {
         <div class="stat"><b>${st.artists.toLocaleString()}</b><span>artists in Plex</span></div>
         ${Object.entries(st.history).map(([s, n]) => `<div class="stat"><b>${n.toLocaleString()}</b><span>from ${esc((SRC[s] || [, s])[1])}</span></div>`).join("")}
         <div class="stat"><b>${st.cached.toLocaleString()}</b><span>cached lookups</span></div>
+        <div class="stat"><b>${(st.feedback || 0).toLocaleString()}</b><span>artists with feedback</span></div>
         <div class="stat"><b>${(st.db_bytes / 1e6).toFixed(0)} MB</b><span>database</span></div>
       </div>
       <p class="sub">Last full sync: ${when(st.last_sync)}</p>
       <div class="danger"><button class="btn" id="setSync">Sync now</button><button class="btn warn" data-maint="clear-cache">Clear lookup cache</button>
-        <button class="btn warn" data-maint="clear-feedback">Reset hidden &amp; liked</button></div>
+        <button class="btn warn" data-maint="clear-feedback">Reset all feedback</button><span class="muted" id="fbCount" style="align-self:center">${(st.feedback || 0).toLocaleString()} artist${st.feedback === 1 ? "" : "s"}</span></div>
     </div>`)],
     ["signin", "Sign-in", setSection("signin", "Sign-in", `<div class="scard">
       ${lastStatus.auth ? `<p class="sub">Sign-in is on for <b>${esc(lastStatus.user)}</b>.</p>
@@ -1294,10 +1328,12 @@ $("settingsBody").addEventListener("change", async e => {
 $("settingsBody").addEventListener("click", async e => {
   const id = e.target.id;
   const t = e.target.closest("[data-test]"); if (t) { testSvc(t.dataset.test); return; }
+  const nc = e.target.closest("[data-nocomp]");
+  if (nc) { draft.COMP_TASTE = !!nc.classList.contains("on"); nc.classList.toggle("on", !draft.COMP_TASTE); setDirty(true); $("nsSum").innerHTML = nsSummary(); return; }
   const ns = e.target.closest("[data-nst],[data-nsl]");
   if (ns) {
     const k = ns.dataset.nst ? "NOSEED_TAGS" : "NOSEED_LIBRARIES", v = ns.dataset.nst || ns.dataset.nsl;
-    const cur = new Set(val(k) || []); cur.has(v) ? cur.delete(v) : cur.add(v); draft[k] = [...cur]; ns.classList.toggle("on", cur.has(v)); setDirty(true); return;
+    const cur = new Set(val(k) || []); cur.has(v) ? cur.delete(v) : cur.add(v); draft[k] = [...cur]; ns.classList.toggle("on", cur.has(v)); setDirty(true); $("nsSum").innerHTML = nsSummary(); return;
   }
   const un = e.target.closest("[data-unseed]");
   if (un) {
@@ -1340,10 +1376,21 @@ $("settingsBody").addEventListener("click", async e => {
   if (id === "logout") { try { await api("/api/logout", { method: "POST" }); } catch (err) { toast(err.message); return; } location.href = "/login"; return; }
   const m = e.target.closest("[data-maint]");
   if (m) {
-    if (!m.classList.contains("armed")) { m.classList.add("armed"); m.dataset.label = m.textContent; m.textContent = "Click again to confirm"; setTimeout(() => { m.classList.remove("armed"); m.textContent = m.dataset.label; }, 4000); return; }
+    if (m.dataset.maint === "clear-feedback") { if (!window.confirm(RESET_FEEDBACK)) return; }
+    else if (!m.classList.contains("armed")) { m.classList.add("armed"); m.dataset.label = m.textContent; m.textContent = "Click again to confirm"; setTimeout(() => { m.classList.remove("armed"); m.textContent = m.dataset.label; }, 4000); return; }
     try { await api("/api/maintenance/" + m.dataset.maint, { method: "POST" }); toast("Done"); loadSettings(); } catch (err) { toast(err.message); }
   }
 });
+// what /api/maintenance/clear-feedback clears: every row of the feedback table, nothing else
+const RESET_FEEDBACK = `Reset all feedback?
+
+This clears everything on the History page:
+• Artists you marked Not interested
+• Artists you already know, and the ratings you gave them here
+• Artists you liked here
+• The Sent to Lidarr list
+
+Star ratings in Plex, Saved artists, Don't learn from and hidden Liked songs stay as they are. Artists in Lidarr still stay out of your picks.`;
 async function testSvc(id, quiet) {
   const out = $("tres-" + id); if (!out) return;
   out.className = "tres"; out.textContent = "Testing…";
@@ -1372,6 +1419,7 @@ window.addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); 
 const VIEWS = ["home", "setup", "picks", "stream", "liked", "library", "saved", "rate", "history", "settings", "search", "like", "gaps", "releases"];
 function showView(v, keepFilters) {
   view = v;
+  if (v !== "search") $("gq").value = "";
   document.querySelectorAll(".view").forEach(x => x.classList.remove("on"));
   const sec = { home: "v-home", picks: "v-grid", stream: "v-grid", rate: "v-rate", history: "v-history", settings: "v-settings", setup: "v-setup" }[v] || "v-list";
   $(sec).classList.add("on");
@@ -1417,6 +1465,11 @@ document.querySelectorAll("#nav button, #gear").forEach(b => b.onclick = () => g
 function refreshView() { if (view === "home") loadHome(); else if (view === "picks" || view === "stream") load(true); else if (view === "saved") loadSaved(); else if (view === "library") loadLibrary(); else if (view === "history") loadHistory(); }
 
 
+// setup steps that are already done (shared by the extras step and the "While you wait" tips)
+const DONE = {
+  listenbrainz: () => !!(lastStatus.history || {}).listenbrainz,
+  spotify: () => { const h = lastStatus.history || {}; return !!(h.spotify_export || h.spotify || lastStatus.spotify); },
+};
 const APP_SETUP = {
   name: "Recordhound",
   intro: "Music recommendations built from your own Plex library and listening history, with a reason for every pick.",
@@ -1426,15 +1479,15 @@ const APP_SETUP = {
   libType: null,
   libHelp: "Untick any library you want ignored. You can change this later in Settings.",
   extras: [
-    { title: "Connect ListenBrainz", why: "Free scrobbling that covers your listening outside Plex. Your profile needs to be public.", card: "listenbrainz", done: () => !!(lastStatus.history || {}).listenbrainz },
-    { title: "Add your Spotify history", why: "Upload the file Spotify emails you (no developer account needed), or connect your account.", card: "spotify",
-      done: () => { const h = lastStatus.history || {}; return !!(h.spotify_export || h.spotify || lastStatus.spotify); } },
+    { title: "Connect ListenBrainz", why: "Free scrobbling that covers your listening outside Plex. Your profile needs to be public.", card: "listenbrainz", done: () => DONE.listenbrainz() },
+    { title: "Add your Spotify history", why: "Upload the file Spotify emails you (no developer account needed), or connect your account.", card: "spotify", done: () => DONE.spotify() },
     { title: "Connect Lidarr", why: "Add artists you like in one click.", card: "lidarr", done: () => !!lastStatus.lidarr },
   ],
   syncText: "Recordhound is reading your library and looking up every artist. The first time can take 20 minutes or more, because MusicBrainz allows one lookup a second. Later syncs are quick.",
   waitTips: [
-    { title: "Request your Spotify history", why: "Spotify takes a few days to email it, so it's worth asking now.", label: "Set up", card: "spotify" },
-    { title: "Connect ListenBrainz", why: "If you scrobble there, your listening counts from the next sync.", label: "Set up", card: "listenbrainz" },
+    { title: "Rate the artists you play", why: "Ratings are the strongest signal there is. The Rate page goes one artist at a time.", label: "Open Rate", view: "rate" },
+    { title: "Request your Spotify history", why: "Spotify takes a few days to email it, so it's worth asking now.", label: "Set up", card: "spotify", done: () => DONE.spotify() },
+    { title: "Connect ListenBrainz", why: "If you scrobble there, your listening counts from the next sync.", label: "Set up", card: "listenbrainz", done: () => DONE.listenbrainz() },
   ],
   readyText: "Every pick shows which of your artists led to it. Star ratings in Plex or Plexamp sharpen them most.",
   doneLabel: "See your music",
@@ -1516,8 +1569,8 @@ function renderSetup() {
         : `<p class="lead">${APP_SETUP.syncText}</p>
           <div class="wz-progress"><div class="bar-track"><div class="bar-fill wz-indef"></div></div><p class="muted" id="wzStep">${esc(s.step && s.step !== "idle" ? s.step + (s.progress ? " · " + s.progress : "") + "…" : "Starting…")}</p></div>
           <h4 class="wz-h4">While you wait</h4>
-          <div class="wz-list">${APP_SETUP.waitTips.map(t => `<div class="wz-item"><div><b>${t.title}</b><p>${t.why}</p></div>
-            <button class="btn" ${t.card ? `data-wz-card="${t.card}"` : `data-wz-go="${t.view}"`}>${t.label}</button></div>`).join("")}</div>
+          <div class="wz-list">${APP_SETUP.waitTips.map(t => { const done = !!(t.done && t.done()); return `<div class="wz-item"><div><b>${t.title}</b>${done ? pill(true, "Done") : ""}<p>${t.why}</p></div>
+            <button class="btn" ${t.card ? `data-wz-card="${t.card}"` : `data-wz-go="${t.view}"`}>${done ? "Change" : t.label}</button></div>`; }).join("")}</div>
           <p class="muted">You can leave this page; the sync keeps going.</p>`}`;
     if (!ready) wzTimer = setInterval(async () => {
       if (view !== "setup") return clearInterval(wzTimer);
@@ -1601,6 +1654,32 @@ $("homeRows").addEventListener("click", e => {
   else if (c) openSetting(c.dataset.gsCard);
   else if (g) go(g.dataset.gsGo);
 });
+
+// ---- phones: the filter bar fades at its right edge while more controls are off-screen, and the nav row and
+// filters tuck away while you scroll down and come back when you scroll up. The top bar (logo, search, sync,
+// Settings) stays. The header is fixed on phones with the page padded by its full height, so tucking never moves the page.
+const phone = matchMedia("(max-width: 560px)"), hdr = document.querySelector("header");
+function filterFade() { const f = $("filters"); f.classList.toggle("fade-r", f.scrollWidth - f.scrollLeft - f.clientWidth > 4); }
+$("filters").addEventListener("scroll", filterFade, { passive: true });
+new ResizeObserver(filterFade).observe($("filters"));   // narrower when a scrollbar appears
+function tuck(on) { if (hdr.classList.contains("tucked") === on) return; if (on) closePop(); hdr.classList.toggle("tucked", on); }
+function fitHeader() {
+  if (!phone.matches) { tuck(false); document.body.style.removeProperty("--hdr"); return; }
+  if (!hdr.classList.contains("tucked")) document.body.style.setProperty("--hdr", hdr.offsetHeight + "px");
+  filterFade();
+}
+new ResizeObserver(fitHeader).observe(hdr);
+phone.addEventListener("change", fitHeader);
+let hdrY = 0;
+window.addEventListener("scroll", () => {
+  if (!phone.matches) return;
+  const y = window.scrollY;
+  if (y < 80) tuck(false);
+  else if (y > hdrY + 10) tuck(true);
+  else if (y >= hdrY - 10) return;   // small moves either way change nothing
+  else tuck(false);
+  hdrY = y;
+}, { passive: true });
 
 // ------------------------------------------------------------------ status
 let wasRunning = false, userSync = false;

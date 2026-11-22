@@ -433,7 +433,7 @@ class Syncer:
             if (al_new := [x for x in albums if (x.get("date") or "") >= recent and not x["owned"]]):
                 releases += al_new
             if k in lib and not a.get("missing"):
-                missing = [{**x, "special": special_release(x["title"])} for x in albums
+                missing = [{**x, "special": special_release(x["title"], (lib.get(k) or {}).get("albums", []))} for x in albums
                            if not x.get("mb_only") and not x["owned"] and (x.get("date") or "9") <= today.isoformat()]
                 n_own = len([x for x in albums if x["owned"]])
                 if missing and n_own:   # EPs and special releases are kept, marked; the page filters by your settings

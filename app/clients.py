@@ -64,12 +64,25 @@ def album_key(title):
 
 # Release titles that aren't a studio album: "Synthetic (Remixes)", "The Midnight Remixed", "Heroes (& Instrumentals)",
 # "Siberia (Acoustic)", "Live at Wembley". "Live Through This" stays an album: live needs brackets, a dash, or at/in/from.
-_SPECIAL_RELEASE = re.compile(r"\b(remix(es|ed)?|instrumentals?|acoustic|karaoke|demos?|a ?cappella|unplugged|reimagined)\b"
+# Compilations and rarities too: "Greatest Hits", "The Best of", "B-Sides & Rarities", "Anthology", "The Singles".
+_SPECIAL_RELEASE = re.compile(r"\b(remix(es|ed)?|rmx|instrumentals?|acoustic|karaoke|demos?|a ?cappella|unplugged|reimagined"
+                              r"|rarities|rare tracks|b[- ]?sides|best of|greatest hits|anthology|essentials?|collection|singles)\b"
                               r"|[(\[\-–]\s*live\b|\blive (at|in|from)\b", re.I)
 
 
-def special_release(title):
-    return bool(_SPECIAL_RELEASE.search(title or ""))
+def _words(title):
+    s = unicodedata.normalize("NFKD", (title or "").translate(_PLAIN)).encode("ascii", "ignore").decode().lower()
+    return " ".join(re.findall(r"[a-z0-9]+", s))
+
+
+def special_release(title, owned=()):
+    """A remix, live, acoustic or compilation release, or a reissue of an album you own, like "OK Computer OKNOTOK
+    1997 2017" or "Kid A Mnesia" when you have OK Computer and Kid A. owned: titles of the artist's albums you have."""
+    if _SPECIAL_RELEASE.search(title or ""):
+        return True
+    w = _words(title)
+    mine = (_words(re.sub(r"[\(\[][^\)\]]*[\)\]]", "", t or "")) for t in owned)   # "OK Computer (Deluxe)" is OK Computer
+    return any(len(o) >= 4 and w.startswith(o + " ") for o in mine)
 
 
 @functools.lru_cache(maxsize=200_000)

@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, auth, security, config, db, engine
-from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, SpotifyNoDevice, album_key, owned_track, artist_key, artist_source, credit_keys, song_key, song_keys,
+from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, SpotifyNoDevice, album_key, owned_track, special_release, artist_key, artist_source, credit_keys, song_key, song_keys,
                       listenbrainz_top_artists, parse_spotify_export, parse_youtube_music, spotify_auth_url, spotify_exchange, spotify_pasted, spotify_redirect,
                       SPOTIFY_HELPER, SPOTIFY_LOOPBACK)
 from .sync import Syncer, friendly_error
@@ -195,11 +195,11 @@ def _reach(r):
 
 
 def _filter(rows, q="", tags="", exclude_tags="", tag_mode="any", seed="", pop="", sort="score"):
-    inc = [t.strip().lower() for t in tags.split(",") if t.strip()]
-    exc = {t.strip().lower() for t in exclude_tags.split(",") if t.strip()}
+    inc = [engine.tag_key(t) for t in tags.split(",") if t.strip()]   # "singer/songwriter" finds "singer-songwriter" too
+    exc = {engine.tag_key(t) for t in exclude_tags.split(",") if t.strip()}
     out = []
     for r in rows:
-        rt = set(r.get("tags") or [])
+        rt = {engine.tag_key(t) for t in r.get("tags") or []}
         if inc and not (set(inc) <= rt if tag_mode == "all" else rt & set(inc)):
             continue
         if exc & rt:
@@ -234,8 +234,13 @@ def recs(kind: str = "new", offset: int = 0, limit: int = 60, q: str = "", tags:
 @app.get("/api/tags")
 def tag_facets(kind: str = "new"):
     from collections import Counter
-    c = Counter(t for r in _visible(kind) for t in (r.get("tags") or [])[:6])
-    return {"tags": [{"tag": t, "n": n} for t, n in c.most_common(80) if n >= 3], "taste": db.get_meta("taste", [])}
+    c, spell = Counter(), {}
+    for r in _visible(kind):
+        for t in {engine.tag_key(t): t for t in (r.get("tags") or [])[:6] if t not in engine.JUNK_TAGS}.items():
+            c[t[0]] += 1
+            spell.setdefault(t[0], Counter())[t[1]] += 1
+    # spellings of one tag count together, shown the way most artists have it
+    return {"tags": [{"tag": spell[k].most_common(1)[0][0], "n": n} for k, n in c.most_common(80) if n >= 3], "taste": db.get_meta("taste", [])}
 
 
 @app.get("/api/home")
@@ -325,7 +330,7 @@ def your_library(offset: int = 0, limit: int = 120, q: str = ""):
     if q:
         ql = q.lower()
         rows = [a for a in rows if ql in (a.get("title") or "").lower() or ql in (a.get("artist") or "").lower()]
-    return _fast({"total": len(rows), "items": rows[offset:offset + limit], "playlist": config.PLEX_PLAYLIST})
+    return _fast({"total": len(rows), "all": len(_unplayed()), "items": rows[offset:offset + limit], "playlist": config.PLEX_PLAYLIST})
 
 
 _album_thumbs = {"gen": None, "map": {}}
@@ -356,7 +361,7 @@ class PlaylistBody(BaseModel):
 @app.post("/api/plex/playlist")
 def make_playlist(body: PlaylistBody):
     """Put your top unplayed albums in a Plex playlist (replacing the one made last time)."""
-    rks = [a["rk"] for a in _unplayed()[:max(1, min(body.count, 200))]]
+    rks = [a["rk"] for a in _unplayed()[:max(1, min(body.count, 250))]]
     if not rks:
         raise HTTPException(400, "No unplayed albums yet. Run a sync first.")
     try:
@@ -502,9 +507,11 @@ def liked_playlist():
 def _gap_groups():
     """Albums you're missing, by artist, as your settings want them: studio albums, plus EPs and remix, instrumental,
     live or acoustic releases if you've asked for those. Older syncs only kept studio albums, which still works."""
-    out = []
+    out, lib = [], db.library_map()
     for g in (db.get_meta("gaps") or {}).get("groups", []):
-        keep = [a for a in g["albums"] if (a.get("type") != "ep" or config.GAPS_EPS) and (not a.get("special") or config.GAPS_SPECIAL)]
+        owned = (lib.get(g["key"]) or {}).get("albums", [])   # checked here too, so older syncs get the newer rules
+        special = lambda a: a.get("special") or special_release(a.get("title"), owned)   # noqa: E731
+        keep = [a for a in g["albums"] if (a.get("type") != "ep" or config.GAPS_EPS) and (not special(a) or config.GAPS_SPECIAL)]
         if keep:
             out.append({**g, "albums": keep[:12], "total": g["owned"] + len(keep)})
     return out
@@ -1211,6 +1218,11 @@ def _guard_secrets(values):
         raise HTTPException(400, f"You changed the address, so enter the {what} again. Saved keys are only sent to the address they were saved with.")
 
 
+def _short_version(v):
+    """Plex reports "1.41.0.8992-f63ef7c4a"; people know it as 1.41.0."""
+    return ".".join(str(v).split("-")[0].split(".")[:3])
+
+
 @app.post("/api/settings/test/{service}")
 def test_service(service: str, values: dict):
     _guard_secrets(values)
@@ -1222,10 +1234,10 @@ def test_service(service: str, values: dict):
             plex = Plex(v["PLEX_URL"], v["PLEX_TOKEN"])
             info = plex._get("/")
             libs = [{"title": d.get("title"), "type": d.get("type")} for d in plex.all_sections() if d.get("type") == "artist"]
+            who = f"Connected to {info.get('friendlyName') or 'Plex'}{' v' + _short_version(info['version']) if info.get('version') else ''}"
             if not libs:
-                return {"ok": False, "message": f"Connected to {info.get('friendlyName', 'Plex')}, but it has no music libraries"}
-            return {"ok": True, "message": f"Connected to {info.get('friendlyName', 'Plex')} · {len(libs)} music librar{'y' if len(libs) == 1 else 'ies'}",
-                    "libraries": libs}
+                return {"ok": False, "message": f"{who} · no music libraries"}
+            return {"ok": True, "message": f"{who} · {len(libs)} music librar{'y' if len(libs) == 1 else 'ies'}", "libraries": libs}
         if service == "lastfm":
             if not v["LASTFM_API_KEY"]:
                 if v["LASTFM_USERNAME"]:
@@ -1238,18 +1250,18 @@ def test_service(service: str, values: dict):
                 if "API key" in str(e):
                     return {"ok": False, "message": LASTFM_PRO_NOTE + " Clear the key to use free sources instead."}
                 raise
-            msg = "Last.fm key works"
+            msg = "Connected to Last.fm · key works"
             if v["LASTFM_USERNAME"]:
                 u = lf.call("user.getInfo", user=v["LASTFM_USERNAME"])
                 if not u:
                     return {"ok": False, "message": f"Key works, but there's no Last.fm user '{v['LASTFM_USERNAME']}'"}
-                msg += f" · {int(u['user'].get('playcount') or 0):,} scrobbles for {u['user']['name']}"
+                msg = f"Connected to Last.fm · {int(u['user'].get('playcount') or 0):,} scrobbles for {u['user']['name']}"
             return {"ok": True, "message": msg}
         if service == "listenbrainz":
             if not v["LISTENBRAINZ_USERNAME"]:
                 raise APIError("Enter your ListenBrainz username")
             rows = listenbrainz_top_artists(v["LISTENBRAINZ_USERNAME"], 5)
-            return {"ok": True, "message": f"Found {v['LISTENBRAINZ_USERNAME']}" + ("" if rows else " (ListenBrainz hasn't calculated your stats yet)")}
+            return {"ok": True, "message": f"Connected to ListenBrainz · found {v['LISTENBRAINZ_USERNAME']}" + ("" if rows else " (ListenBrainz hasn't calculated your stats yet)")}
         if service == "lidarr":
             if not v["LIDARR_URL"] or not v["LIDARR_API_KEY"]:
                 raise APIError("Enter the Lidarr URL and API key")
@@ -1258,11 +1270,13 @@ def test_service(service: str, values: dict):
                 raise APIError("Lidarr rejected the API key")
             r.raise_for_status()
             o = Lidarr(v["LIDARR_URL"], v["LIDARR_API_KEY"]).options()
-            return {"ok": True, "message": f"Connected to Lidarr v{r.json().get('version', '?')} · {len(o['profiles'])} quality profiles, {len(o['roots'])} root folders"}
+            n = lambda k, w: f"{k} {w}{'' if k == 1 else 's'}"   # noqa: E731
+            ver = r.json().get("version")
+            return {"ok": True, "message": f"Connected to Lidarr{' v' + ver if ver else ''} · {n(len(o['profiles']), 'quality profile')}, {n(len(o['roots']), 'root folder')}"}
         if service == "spotify":
             Spotify(v["SPOTIFY_CLIENT_ID"], config.SPOTIFY_REFRESH_TOKEN,
                     lambda t: config.save({"SPOTIFY_REFRESH_TOKEN": t}))._get("/me")
-            return {"ok": True, "message": "Spotify is connected"}
+            return {"ok": True, "message": "Connected to Spotify"}
         raise HTTPException(404, "unknown service")
     except HTTPException:
         raise

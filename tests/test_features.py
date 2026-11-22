@@ -34,7 +34,8 @@ def test_varied():
     assert len(a) == 24 and len({r["key"] for r in a}) == 24
     assert sum(1 for r in a if r["because"][0]["key"] == "seedA") <= 2
     assert a == engine.varied(rows, 24, salt="2026-47")            # same week, same row
-    assert [r["key"] for r in a] != [r["key"] for r in engine.varied(rows, 24, salt="2026-48")]
+    assert {r["key"] for r in a} != {r["key"] for r in engine.varied(rows, 24, salt="2026-48")}
+    assert [r["score"] for r in a] == sorted((r["score"] for r in a), reverse=True)   # the row still reads best first
     few = engine.varied(rows[:5], 24, salt="x")                      # not enough to fill: no crash, no repeats
     assert len(few) == 5
 
@@ -140,6 +141,7 @@ def test_pipeline_features(monkeypatch):
     lib = c.get("/api/library").json()
     assert lib["total"] == len(un) and lib["items"][0]["cover"].startswith("/api/cover/")
     assert c.get("/api/library?q=nothing-matches").json()["total"] == 0
+    assert c.get("/api/library?q=nothing-matches").json()["all"] == len(un)   # the full count, for the title and playlist sizes
     assert c.get("/api/cover/abc").status_code == 404
 
     made = {}
@@ -206,3 +208,14 @@ def test_old_spotify_upload_gets_a_hint():
     assert c.get("/api/settings").json()["stats"]["spotify_export_old"] is True
     db.set_meta("spotify_export_v", 2)
     assert c.get("/api/settings").json()["stats"]["spotify_export_old"] is False
+
+
+def test_tag_spellings_count_together_and_junk_tags_stay_out(monkeypatch):
+    import app.main as m
+    rows = [{"key": f"a{i}", "name": f"A{i}", "tags": [t, "uk", "4ad"]} for i, t in
+            enumerate(["singer-songwriter", "singer/songwriter", "Singer Songwriter", "singer-songwriter"])]
+    monkeypatch.setattr(m, "_visible", lambda kind: rows)
+    tags = m.tag_facets("new")["tags"]
+    assert tags == [{"tag": "singer-songwriter", "n": 4}]   # one chip, the common spelling, no "uk" or "4ad"
+    assert len(m._filter(rows, tags="singer/songwriter")) == 4
+    assert m._filter(rows, exclude_tags="Singer-Songwriter") == []

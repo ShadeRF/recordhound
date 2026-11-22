@@ -13,12 +13,22 @@
 """
 import math
 import random
+import re
 import time
 from collections import defaultdict
 
 SCORE_WEIGHTS = {"collab": 0.55, "content": 0.35, "pop": 0.10}
 JUNK_TAGS = {"seen live", "favorites", "favourite", "favorite", "albums i own", "under 2000 listeners", "spotify",
-             "my favorite", "love", "awesome", "beautiful", "cool", "good", "best", "amazing", "check out", "seen in concert"}
+             "my favorite", "love", "awesome", "beautiful", "cool", "good", "best", "amazing", "check out", "seen in concert",
+             # where they're from, the language they sing in, or their record label: not a sound
+             "uk", "usa", "us", "united states", "united kingdom", "england", "english", "british", "american", "canadian", "canada",
+             "australian", "australia", "irish", "scottish", "welsh", "german", "swedish", "norwegian", "icelandic", "french",
+             "japanese", "london", "4ad", "sub pop", "warp", "matador", "domino", "xl recordings", "rough trade", "merge records"}
+
+
+def tag_key(tag):
+    """One key for spellings of the same tag: "singer/songwriter", "singer-songwriter" and "Singer Songwriter"."""
+    return re.sub(r"[^a-z0-9]+", "", (tag or "").lower()) or (tag or "").lower()
 SOURCES = ("plex", "lastfm", "listenbrainz", "spotify", "spotify_export", "youtube_music", "plex_comp")
 
 
@@ -298,7 +308,7 @@ def varied(rows, n=24, per_seed=2, pool=3, salt=None):
     if len(out) < n:   # not enough variety to fill the row: top up in score order
         have = {r["key"] for r in out}
         out += [r for r in rows if r["key"] not in have][:n - len(out)]
-    return out
+    return sorted(out, key=lambda r: -(r.get("score") or 0))   # the mix changes weekly; the row still reads best first
 
 
 def taste_tags(pos, n=12):

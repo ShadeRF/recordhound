@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <link rel="manifest" href="/static/manifest.webmanifest">
 <meta name="theme-color" content="#0e0d0c">
-<link rel="stylesheet" href="/static/app.css?v=24">
+<link rel="stylesheet" href="/static/app.css?v=27">
 </head>
 <body>
 <header>
@@ -36,7 +36,7 @@
     <span class="seg" id="popSeg"><button data-pop-v="" class="on">Any size</button><button data-pop-v="deep">Deep cuts</button><button data-pop-v="mid">Mid</button><button data-pop-v="known">Well known</button></span>
     <select class="sort" id="sort">
       <option value="score">Sort: Best match</option><option value="obscure">Sort: Least known</option>
-      <option value="popular">Sort: Most listeners</option><option value="name">Sort: Name</option>
+      <option value="popular">Sort: Most popular</option><option value="name">Sort: Name</option>
     </select>
     <div class="pop" id="pop"></div>
   </div>
@@ -55,6 +55,7 @@
   <section id="v-rate" class="view"><div id="rateBody"></div></section>
   <section id="v-history" class="view">
     <div class="pills" id="pills"></div>
+    <div class="hist-tools"><input type="search" id="histQ" placeholder="Search" aria-label="Search history"><span class="count" id="hiddenNote" style="margin:0"></span></div>
     <div class="hgrid" id="hiddenGrid"></div>
   </section>
   <section id="v-setup" class="view"><div class="setup" id="setupBody"></div></section>
@@ -70,6 +71,6 @@
 <div class="nowplaying" id="np"></div>
 <div class="toast" id="toast"></div>
 <audio id="audio" preload="none"></audio>
-<script src="/static/app.js?v=36"></script>
+<script src="/static/app.js?v=40"></script>
 </body>
 </html>

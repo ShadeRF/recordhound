@@ -567,3 +567,12 @@ def test_soundtrack_settings(client, monkeypatch):
     monkeypatch.setattr(config, "COMP_LIBRARY", False)
     assert [a["title"] for a in c.get("/api/library").json()["items"]] == ["Kid A"]
     db.set_meta("unplayed", None)
+
+
+def test_compilations_and_reissues_count_as_special_releases():
+    from app.clients import special_release
+    assert all(special_release(t) for t in ("Greatest Hits", "The Best of Blur", "B-Sides & Rarities", "Anthology", "The Singles",
+                                            "The Essential Clash", "Rare Tracks", "The Collection", "TKOL RMX 1234567"))
+    owned = ["OK Computer (Deluxe)", "Kid A"]
+    assert special_release("OK Computer OKNOTOK 1997 2017", owned) and special_release("KID A MNESIA", owned)
+    assert not special_release("Kid A", owned) and not special_release("Amnesiac", owned) and not special_release("OK Computer OKNOTOK")

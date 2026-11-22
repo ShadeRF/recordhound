@@ -315,14 +315,21 @@ def test_album_without_a_cover_keeps_its_title_clear_of_the_date(page):
 
 def test_library_filter_keeps_focus_while_typing(page):
     go(page, "library")
-    page.locator("#libN").select_option("100")
+    total = page.evaluate("libTotal")
+    sizes = [int(v) for v in page.locator("#libN option").evaluate_all("os => os.map(o => o.value)")]
+    assert sizes and max(sizes) <= total, (sizes, total)   # never offers more albums than there are
+    assert "Playlist size" in page.locator(".lib-tools").inner_text()
+    pick = str(sizes[0])
+    page.locator("#libN").select_option(pick)
     box = page.locator("#libQ")
     box.click()
     box.press_sequentially("ep", delay=120)
     settle(page)
     page.wait_for_timeout(400)
     assert page.evaluate("document.activeElement && document.activeElement.id") == "libQ"
-    assert page.locator("#libQ").input_value() == "ep" and page.locator("#libN").input_value() == "100"
+    shown = page.evaluate("libTotal")
+    assert f"{shown} match" in view(page).inner_text() and f"{total} album" in page.locator(".list-head").inner_text()   # the title keeps the full count
+    assert page.locator("#libQ").input_value() == "ep" and page.locator("#libN").input_value() == pick
 
 
 def test_setup_walkthrough_keeps_every_library_ticked(page, site):
@@ -340,6 +347,9 @@ def test_setup_walkthrough_keeps_every_library_ticked(page, site):
         settle(page)
         boxes = page.locator("[data-wz-lib]")
         assert boxes.count() == 3 and all(boxes.nth(i).is_checked() for i in range(3))
+        libs, token = page.locator(".wz-libs").bounding_box(), page.locator('[data-wz-k="PLEX_TOKEN"]').bounding_box()
+        assert abs(libs["x"] - token["x"]) < 4, "the library chips line up with the fields above, not indented again"
+        assert "Connected to Test Plex v1.40.0 · 3 music libraries" in page.locator(".wz .tres").inner_text()
         boxes.nth(1).uncheck()
         boxes.nth(1).check()                        # all ticked again means "every library"
         page.locator('[data-wz="test"]').click()    # anything that redraws the step
@@ -589,6 +599,7 @@ def test_albums_on_an_artist_page_open_with_links_and_lidarr(page, site, monkeyp
         assert tracks.count() == 2 and "3:20" in tracks.first.inner_text() and "1:05" in tracks.nth(1).inner_text()
         assert tracks.first.locator(".own-t").count() == 1 and tracks.nth(1).locator(".pb.off").count() == 1
         assert "You own 1 of these 2 tracks" in box.inner_text()
+        assert box.locator("[data-alb-spotify]").count() == 0 and box.locator("[data-alb-open-spotify]").inner_text().strip() == "Open in Spotify"
         box.locator("[data-alb-lidarr]").click()
         box.locator("[data-lk-add]").click()
         page.wait_for_function("document.querySelector('#albBox .albl').innerText.includes('Sent to Lidarr')")
@@ -638,7 +649,11 @@ def test_liked_not_owned_sorts_groups_and_filters(page, monkeypatch):
         assert titles() == ["Feels So Far Away", "A River's Invitation", "Isabelle", "A Man Written"]   # "The" is ignored
         page.select_option("#lkSort", "year")
         assert titles()[0] == "Isabelle" and titles()[-1] == "A River's Invitation"
+        assert page.locator(".lk-row .lk-a").count() == 4
+        assert page.locator(".lk-row [data-lk-hide]").first.inner_text() == "Hide album"
         page.click("[data-lk-group=artist]")
+        assert page.locator(".lk-row .lk-a").count() == 0, "rows under an artist's heading repeat the artist"
+        assert page.locator(".lk-row [data-lk-hide]").first.inner_text() == "Hide song"
         heads = page.locator(".lk-ahead b").all_inner_texts()
         assert heads == ["Whitney Whitney", "Bellvie", "The California Honeydrops"]
         assert "2 songs · 2 releases" in page.locator(".lk-ahead").first.inner_text()
@@ -693,6 +708,7 @@ def test_play_buttons_use_spotify_when_connected_and_fall_back_to_previews(page,
         page.locator("#albTracks .atrk").nth(1).click()   # not on Spotify: the preview plays instead
         page.wait_for_function("said.some(m => String(m).startsWith('Not on Spotify'))")
         assert page.evaluate("document.getElementById('audio').src").endswith("/b.mp3")
+        assert "Open in Spotify" not in page.locator("#albBox").inner_text()   # one Spotify button: the one that plays
         page.click("[data-alb-spotify]")
         page.wait_for_function("said.some(m => String(m).startsWith('Playing Spotify Album'))")
         assert played == [("track", "a" * 22), ("album", "a" * 22)]
@@ -703,3 +719,167 @@ def test_play_buttons_use_spotify_when_connected_and_fall_back_to_previews(page,
             db.conn().execute("INSERT INTO cache(k, json, at) VALUES (?, ?, ?)", ("dz:" + lib["key"], before[0], before[1]))
         db.set_meta("spotify_can_play", None)
         db.commit()
+
+
+def test_history_has_a_note_and_a_search_box(page, site):
+    db = site["db"]
+    go(page, "picks")
+    card = page.locator("#grid .card[data-key]").first
+    key = card.get_attribute("data-key")
+    name = page.evaluate("k => REG.get(k).name", key)
+    card.hover()
+    card.locator(".quick[data-hide]").click()
+    settle(page)
+    assert page.locator("#toast").inner_text().startswith(f"Not interested in {name}")
+    try:
+        go(page, "history")
+        assert page.locator('#pills [data-ht="dismissed"]').inner_text().startswith("Not interested")
+        assert page.locator('#pills [data-ht="known"]').inner_text().startswith("Already know them")
+        assert "nudged down" in page.locator("#hiddenNote").inner_text()
+        assert page.locator(f'#hiddenGrid .hcard[data-key="{key}"]').count() == 1
+        page.fill("#histQ", "zzz no such artist")
+        assert page.locator("#hiddenGrid").inner_text().strip() == "Nothing here yet."
+        page.fill("#histQ", name[:3])
+        assert page.locator(f'#hiddenGrid .hcard[data-key="{key}"]').count() == 1
+        page.locator('#pills [data-ht="added"]').click()
+        assert "Lidarr" in page.locator("#hiddenNote").inner_text()
+    finally:
+        db.clear_feedback(key)
+
+
+def test_header_search_clears_when_you_leave_search(page):
+    go(page, "search/gaze")
+    assert page.locator("#gq").input_value() == "gaze"
+    go(page, "home")
+    assert page.locator("#gq").input_value() == ""
+
+
+def test_why_this_pick_shows_bars_without_numbers(page):
+    go(page, "picks")
+    page.locator("#grid .card[data-key]").first.click()
+    page.wait_for_selector("#drawer .seed .meter")
+    meter = page.locator("#drawer .seed .meter").first
+    assert meter.get_attribute("aria-label") == "How much this pushed the pick"
+    assert page.locator("#drawer .seed .pct").count() == 0 and "%" not in page.locator("#drawer .seeds").inner_text()
+    assert page.locator("#drawer [data-rate-open] svg").count() == 1   # the Rate button has the star
+
+
+def test_rate_page_words_and_keys(page, site):
+    go(page, "rate")
+    page.locator('#rateSeg [data-mode="picks"]').click()
+    settle(page)
+    acts = page.locator(".rate-actions").inner_text()
+    assert "Already know them" in acts and "Not interested" in acts and "Not for me" not in acts
+    assert page.locator('[data-ra="known"] kbd').inner_text() == "K"
+    assert page.locator(".rate-help .keys").is_visible() and not page.locator(".rate-help .touch").is_visible()
+
+
+def test_rate_page_on_a_touch_screen_has_no_keyboard_help(browser, site):
+    ctx = browser.new_context(viewport={"width": 390, "height": 800}, is_mobile=True, has_touch=True)
+    ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(site["base"]) else r.abort())
+    p = ctx.new_page()
+    try:
+        p.goto(site["base"] + "#/rate")
+        p.wait_for_load_state("networkidle")
+        if not p.evaluate("matchMedia('(hover: none)').matches"):
+            pytest.skip("this browser doesn't emulate a touch screen")
+        assert not p.locator(".rate-help .keys").is_visible() and p.locator(".rate-help .touch").is_visible()
+        assert "Tap the left half" in p.locator(".rate-help").inner_text()
+        assert all(not k.is_visible() for k in p.locator(".rate kbd").all())
+    finally:
+        ctx.close()
+
+
+def test_settings_wording(page, site):
+    db = site["db"]
+    db.set_feedback("someone", "dismissed", "Someone")
+    try:
+        go(page, "settings")
+        assert page.locator('#svc-plex [data-test="plex"]').text_content() == "Test connection"
+        page.wait_for_function("document.getElementById('tres-plex').textContent.includes('Connected')")
+        assert page.locator("#tres-plex").text_content() == "✓ Connected to Test Plex v1.40.0 · 3 music libraries"
+        labels = page.locator("#set-taste .field > label").all_inner_texts()
+        for want in ("Libraries to leave out", "Albums to leave out", "Genres to leave out", "Artists left out"):
+            assert any(want in x for x in labels), (want, labels)
+        reset = page.locator('[data-maint="clear-feedback"]')
+        n = db.stats()["feedback"]
+        assert reset.inner_text() == "Reset all feedback" and page.locator("#fbCount").inner_text() == f"{n} artist{'' if n == 1 else 's'}"
+        assert "artists with feedback" in page.locator("#set-sync .stats").inner_text()
+        asked = []
+        page.once("dialog", lambda d: (asked.append(d.message), d.dismiss()))
+        reset.click()   # says what goes first; saying no keeps everything
+        assert asked and asked[0].startswith("Reset all feedback?") and "• Artists you marked Not interested" in asked[0]
+        settle(page)
+        assert db.stats()["feedback"] == n
+        assert [s.get_attribute("id") for s in page.locator(".setsec").all()] == \
+            ["set-connections", "set-history", "set-taste", "set-picks", "set-plex", "set-sync", "set-signin"]
+    finally:
+        db.clear_feedback("someone")
+
+
+def test_you_stream_says_when_no_listening_history_is_connected(page):
+    go(page, "stream")
+    html = page.evaluate("lastStatus.history = {plex_comp: 4}; emptyState()")
+    assert "no listening history is connected" in html and "data-open-setting" in html
+    page.evaluate("document.getElementById('grid').innerHTML = emptyState()")
+    page.click("[data-open-setting]")
+    settle(page)
+    assert view(page).get_attribute("id") == "v-settings"
+    page.wait_for_function("Math.abs(document.getElementById('set-history').getBoundingClientRect().top - headerOffset()) < 30")
+
+
+def test_albums_youre_missing_tick_boxes_sit_by_their_labels(page):
+    go(page, "gaps")
+    for cb in page.locator("[data-gap-opt]").all():
+        assert cb.bounding_box()["width"] < 30
+
+
+def test_releases_show_the_date_once(page):
+    go(page, "releases")
+    soon = page.locator(".card.al", has=page.locator(".match")).first
+    assert soon.count() == 1 and soon.locator(".why").count() == 0, "an announced album shows its date twice"
+    past = page.locator(".card.al").filter(has_not=page.locator(".match")).first
+    if past.count():
+        assert past.locator(".why").count() == 1 and " · 20" not in past.locator(".s").inner_text()
+
+
+def test_setup_while_you_wait_marks_whats_done(page):
+    go(page, "setup")
+    page.evaluate("""() => { clearInterval(wzTimer); wz.step = wzSteps().length - 1;
+        lastStatus = { ...lastStatus, running: true, last_sync: null, error: null, history: { listenbrainz: 3 } }; renderSetup(); clearInterval(wzTimer); }""")
+    items = page.locator(".wz-list .wz-item")
+    assert items.first.inner_text().startswith("Rate the artists you play") and items.first.locator('[data-wz-go="rate"]').count() == 1
+    lb = items.filter(has_text="Connect ListenBrainz")
+    assert "Done" in lb.inner_text() and lb.locator("button").inner_text() == "Change"
+    sp = items.filter(has_text="Request your Spotify history")
+    assert "Done" not in sp.inner_text()
+
+
+def test_phone_header_tucks_away_while_scrolling_down(browser, site):
+    ctx = browser.new_context(viewport={"width": 390, "height": 800}, is_mobile=True, has_touch=True)
+    ctx.route("**/*", lambda r: r.continue_() if r.request.url.startswith(site["base"]) else r.abort())
+    p = ctx.new_page()
+    try:
+        p.goto(site["base"] + "#/picks")
+        p.wait_for_load_state("networkidle")
+        p.evaluate("document.getElementById('sentinel').style.height = '4000px'")
+        f = p.locator("#filters")
+        assert f.evaluate("f => f.scrollWidth > f.clientWidth"), "the test needs a filter bar wider than the phone"
+        assert f.evaluate("f => f.classList.contains('fade-r')"), "no fade while more filters are off to the right"
+        heights = f.evaluate("f => [...f.querySelectorAll('button')].map(b => b.offsetHeight)")
+        assert max(heights) < 40, heights   # no button wraps onto two lines
+        f.evaluate("f => { f.scrollLeft = f.scrollWidth; f.dispatchEvent(new Event('scroll')); }")
+        assert not f.evaluate("f => f.classList.contains('fade-r')"), "the fade stays at the end of the bar"
+        assert p.locator("#gridHead").bounding_box()["y"] >= p.locator("header").bounding_box()["height"] - 1, "the page starts under the header"
+        for y in (300, 600, 900):
+            p.evaluate("y => scrollTo(0, y)", y)
+            p.wait_for_timeout(80)
+        assert p.locator("#nav").is_hidden() and p.locator("#filters").is_hidden() and p.locator("#gsearch").is_visible()
+        where = "document.getElementById('grid').getBoundingClientRect().top + scrollY"
+        before = p.evaluate(where)
+        p.evaluate("scrollTo(0, 700)")
+        p.wait_for_timeout(80)
+        assert p.locator("#nav").is_visible() and p.locator("#filters").is_visible(), "scrolling up brings them back"
+        assert p.evaluate(where) == before, "the page moved when the header changed"
+    finally:
+        ctx.close()
