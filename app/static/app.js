@@ -818,7 +818,9 @@ function renderLikedList() {
       if (!es[0].isIntersecting || view !== "liked" || !$("lkList")) return;
       $("lkList").insertAdjacentHTML("beforeend", items.slice(likedShown, likedShown + LIKED_PAGE).map(likedItem).join(""));
       likedShown += LIKED_PAGE;
-      if (likedShown >= items.length) likedObs.disconnect();
+      if (likedShown >= items.length) { likedObs.disconnect(); return; }
+      // Look again: if the end is still in reach after adding rows, the browser won't report it a second time.
+      likedObs.unobserve($("lkEnd")); likedObs.observe($("lkEnd"));
     }, { rootMargin: "1200px" });
     likedObs.observe($("lkEnd"));
   }

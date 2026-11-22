@@ -545,7 +545,7 @@ def test_liked_not_owned_keeps_loading_as_you_scroll(page, monkeypatch):
         go(page, "liked")
         assert page.locator(".lk-row").count() == 60 and not page.locator("#lkMore").count()
         for want in (120, 130):
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.locator("#lkEnd").scroll_into_view_if_needed()
             page.wait_for_function(f"document.querySelectorAll('.lk-row').length === {want}")
     finally:
         db.set_meta("spotify_liked", None); db.set_meta("plex_songs", None)
