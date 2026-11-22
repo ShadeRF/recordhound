@@ -699,14 +699,14 @@ function renderLiked() {
   const d = liked;
   if (!d.ready) {
     listShell(LIKED_TITLE, "", (d.connected ? `<div class="empty">This fills in after your next sync, which reads your Liked Songs from Spotify and every song in Plex.</div>`
-      : `<div class="empty">Connect your Spotify account to see the songs you've liked there that aren't in your Plex library.<br><br><button class="btn primary" id="lkConnect">Connect Spotify in Settings</button></div>`), `<div class="lib-tools">${streamSwitch("liked")}</div>`);
+      : `<div class="empty">Connect your Spotify account to see the songs you've liked there that aren't in your Plex library.<br><br><button class="btn primary" id="lkConnect">Connect Spotify in Settings</button></div>`));
     if ($("lkConnect")) $("lkConnect").onclick = () => openSetting("spotify");
     return;
   }
   const missing = d.albums.reduce((n, a) => n + a.songs.length, 0), plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? "" : "s"}`;
   const sub = `${plural(missing, "song")} of the ${d.total.toLocaleString()} you've liked on Spotify ${missing === 1 ? "isn't" : "aren't"} in Plex.` +
     (d.hidden ? ` ${plural(d.hidden, "song")} hidden. <button class="link accent" id="lkUnhide">Show them again</button>` : "");
-  const tools = `<div class="lib-tools">${streamSwitch("liked")}<button class="btn" id="lkPl" ${d.owned ? "" : "disabled"} title="Makes “${esc(d.playlist)}” in Plex, replacing the one made last time">Plex playlist of the ${d.owned.toLocaleString()} you own</button></div>`;
+  const tools = `<div class="lib-tools"><button class="btn" id="lkPl" ${d.owned ? "" : "disabled"} title="Makes “${esc(d.playlist)}” in Plex, replacing the one made last time">Plex playlist of the ${d.owned.toLocaleString()} you own</button></div>`;
   const bar = `<div class="lk-bar">
       <input type="search" id="lkQ" placeholder="Filter by artist, album or song" value="${esc(likedQ)}" aria-label="Filter liked songs">
       <label class="lk-sort">Sort <select id="lkSort">${Object.entries(LK_SORTS).map(([k, [l]]) => `<option value="${k}" ${k === LK.sort ? "selected" : ""}>${l}</option>`).join("")}</select></label>
@@ -1268,6 +1268,8 @@ function showView(v, keepFilters) {
   const sec = { home: "v-home", picks: "v-grid", stream: "v-grid", rate: "v-rate", history: "v-history", settings: "v-settings", setup: "v-setup" }[v] || "v-list";
   $(sec).classList.add("on");
   document.querySelectorAll("#nav button, #gear").forEach(b => b.classList.toggle("on", b.dataset.view === v || (v === "liked" && b.dataset.view === "stream")));
+  const sn = v === "stream" || v === "liked";   // the switch stays put; only the page under it changes
+  $("subnav").hidden = !sn; if (sn) $("subnav").innerHTML = streamSwitch(v);
   const grid = v === "picks" || v === "stream";
   $("filters").style.display = $("activeRow").style.display = grid ? "" : "none";
   if (v !== "settings") $("savebar").classList.remove("on");
@@ -1275,7 +1277,7 @@ function showView(v, keepFilters) {
   if (grid) {
     if (!keepFilters) loadF();
     syncControls();
-    $("gridHead").innerHTML = v === "stream" ? `<div class="lib-banner"><div><h3>You stream these, but don't own them</h3><p>Artists you play on ListenBrainz, Spotify, YouTube Music or Last.fm that aren't in Plex${lastStatus.lidarr ? " or Lidarr" : ""}, most-played first.${lastStatus.lidarr ? " Add them to Lidarr from here." : ""}</p></div>${streamSwitch("stream")}</div>` : "";
+    $("gridHead").innerHTML = v === "stream" ? `<div class="lib-banner"><div><h3>You stream these, but don't own them</h3><p>Artists you play on ListenBrainz, Spotify, YouTube Music or Last.fm that aren't in Plex${lastStatus.lidarr ? " or Lidarr" : ""}, most-played first.${lastStatus.lidarr ? " Add them to Lidarr from here." : ""}</p></div></div>` : "";
     api("/api/tags?kind=" + gridKind()).then(d => tagFacets = d).catch(() => {});
     load(true);
   }

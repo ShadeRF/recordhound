@@ -508,7 +508,8 @@ def test_liked_not_owned_lists_missing_songs_and_hides_albums(page, monkeypatch)
     monkeypatch.setattr(config, "SPOTIFY_REFRESH_TOKEN", "r")
     try:
         go(page, "stream")
-        page.click("#gridHead [data-go=liked]")
+        at = page.locator("#subnav").bounding_box()
+        page.click("#subnav [data-go=liked]")
         settle(page)
         assert page.locator("#nav button.on").inner_text() == "You Stream"
         rows = page.locator(".lk-row")
@@ -524,9 +525,10 @@ def test_liked_not_owned_lists_missing_songs_and_hides_albums(page, monkeypatch)
         assert "1 song hidden" in view(page).inner_text() and "1 song of the 3" in view(page).inner_text()
         page.reload(); settle(page)
         assert page.locator(".lk-row").count() == 1 and "1 song hidden" in view(page).inner_text()   # remembered
-        page.click("#listBody [data-go=stream]")   # and back to the artists
+        assert page.locator("#subnav").bounding_box() == at   # the switch doesn't move between the two pages
+        page.click("#subnav [data-go=stream]")   # and back to the artists
         settle(page)
-        assert view(page).get_attribute("id") == "v-grid" and page.locator("#gridHead [data-go=stream].on").count() == 1
+        assert view(page).get_attribute("id") == "v-grid" and page.locator("#subnav [data-go=stream].on").count() == 1
     finally:
         for k in ("spotify_liked", "plex_songs", "liked_hidden"):
             db.set_meta(k, None)
