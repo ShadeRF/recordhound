@@ -1048,7 +1048,7 @@ def test_albums_you_have_every_track_of_show_owned_without_opening_them(page, si
     try:
         go(page, "home")
         page.evaluate("([k, n]) => openArtist(k, n)", [lib["key"], lib["name"]])
-        page.wait_for_selector("#drawer button[data-alb='0'] .own-b")   # every track is in Plex: owned, no click needed
+        page.wait_for_selector("#drawer button[data-alb='0'] .own-b", state="attached")   # every track is in Plex: owned, no click needed (it's under the EPs tab)
         page.wait_for_timeout(500)
         assert not page.locator("#drawer button[data-alb='1'] .own-b").count()   # one track short: not owned
     finally:
@@ -1100,3 +1100,36 @@ def test_album_rows_on_the_missing_albums_page_have_arrows(page):
         page.wait_for_function("document.querySelector('#listBody .hscroll').scrollLeft > 0")
     finally:
         db.set_meta("gaps", keep)
+
+
+def test_artist_albums_split_into_tabs_with_every_album_shown(page, site):
+    from app import db
+    lib = next(r for r in db.library_map().values() if r.get("albums"))
+    before = db.conn().execute("SELECT json, at FROM cache WHERE k=?", ("dz:" + lib["key"],)).fetchone()
+    albums = [{"id": 600 + i, "title": f"Studio Record {i}", "type": "album", "date": f"{1970 + i}-01-01"} for i in range(30)]
+    albums += [{"id": 700, "title": "Live at the Apollo", "type": "album", "date": "1993-01-01"},
+               {"id": 701, "title": "Greatest Hits", "type": "album", "date": "2001-01-01"},
+               {"id": 702, "title": "Little Record", "type": "ep", "date": "1999-01-01"}]
+    db.cache_put("dz:" + lib["key"], {"id": 1, "name": lib["name"], "albums": albums})
+    db.commit()
+    try:
+        go(page, "home")
+        page.evaluate("([k, n]) => openArtist(k, n)", [lib["key"], lib["name"]])
+        page.wait_for_selector("#drawer .alb-kinds")
+        tabs = page.locator("#drawer .alb-kinds button")
+        assert [t.inner_text().split()[0] for t in tabs.all()] == ["Albums", "EPs", "Live", "Compilations"]
+        assert "on" in tabs.first.get_attribute("class")
+        shown = page.locator("#drawer .albums button[data-alb]:visible")
+        assert shown.count() >= 30   # no cap: every studio album (plus any you own)
+        assert "Live at the Apollo" not in page.locator("#drawer .albums").inner_text()
+        page.click("#drawer .alb-kinds button[data-kind='live']")
+        assert shown.count() == 1 and "Live at the Apollo" in shown.first.inner_text()
+        shown.first.click()
+        assert "Live at the Apollo" in page.locator("#albBox").inner_text()
+        page.click("#drawer .alb-kinds button[data-kind='compilation']")   # the open album isn't in this tab: it closes
+        assert page.locator("#albBox").is_hidden() and "Greatest Hits" in shown.first.inner_text()
+    finally:
+        db.conn().execute("DELETE FROM cache WHERE k=?", ("dz:" + lib["key"],))
+        if before:
+            db.conn().execute("INSERT INTO cache(k, json, at) VALUES (?, ?, ?)", ("dz:" + lib["key"], before[0], before[1]))
+        db.commit()

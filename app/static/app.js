@@ -413,19 +413,38 @@ function renderDrawer(r, loading) {
     ${srcs.length ? `<div class="sec"><h4>Your listening</h4><div class="srcs">${srcs.map(([s, v]) => `<span><img src="${fav((SRC[s] || [s])[0])}" alt="">${esc((SRC[s] || [, s])[1])}${v.plays && s !== "spotify" ? ` · ${fmtN(v.plays)} plays` : ""}${v.rank ? ` · #${v.rank}` : ""}${v.saved ? " · followed" : ""}</span>`).join("")}</div></div>` : ""}
     ${(r.matches || []).length ? `<div class="sec"><h4>Matches your taste</h4><div class="chips">${r.matches.map(t => `<a href="#/picks" data-tagdrill="${esc(t)}">${esc(t)}</a>`).join("")}</div></div>` : ""}
     ${r.bio ? `<div class="sec"><h4>About</h4><p class="bio">${esc(r.bio)}${r.bio_url ? ` <a href="${esc(r.bio_url)}" target="_blank" rel="noopener">Read more on Wikipedia</a>` : r.url ? ` <a href="${esc(r.url)}" target="_blank" rel="noopener">Read more on Last.fm</a>` : ""}</p></div>` : ""}
-    ${(r.albums || []).length ? `<div class="sec"><h4>Albums &amp; EPs</h4><div class="albums">${r.albums.slice(0, 24).map((a, i) => `
-      <button type="button" class="alb${a.owned ? " own" : ""}" data-alb="${i}" aria-expanded="false">${a.cover ? `<img loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="ph"></div>`}${a.owned ? `<span class="own-b">OWNED</span>` : ""}
+    ${(r.albums || []).length ? `<div class="sec"><h4>Albums &amp; EPs</h4>${albumKindTabs(r)}<div class="albums">${r.albums.map((a, i) => `
+      <button type="button" class="alb${a.owned ? " own" : ""}" data-alb="${i}" data-kind="${esc(albumKind(a))}" ${albumKind(a) === r.albKind ? "" : "hidden"} aria-expanded="false">${a.cover ? `<img loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="ph"></div>`}${a.owned ? `<span class="own-b">OWNED</span>` : ""}
         <b>${esc(a.title)}</b><small>${esc((a.date || "").slice(0, 4))}${a.type === "ep" ? " · EP" : ""}</small></button>`).join("")}</div>
       <div class="albbox" id="albBox" hidden></div></div>` : ""}
     ${(r.similar || []).length ? `<div class="sec"><h4>Similar artists</h4><div class="simrow">${r.similar.map(s => `<a data-open="${esc(s.key)}" data-name="${esc(s.name)}" class="${s.owned ? "own" : ""}" title="${s.owned ? "In your library" : ""}"><img loading="lazy" src="${artURL(s)}" alt="" onerror="this.style.visibility='hidden'">${esc(s.name)}</a>`).join("")}</div></div>` : ""}
     ${r.owned ? `<div class="sec noseed-sec"><label class="inline"><input type="checkbox" data-noseed ${r.noseed ? "checked" : ""}> Don't learn from this artist</label>
       <div class="help" style="color:var(--dim);font-size:12px;margin:4px 0 0 24px">Keep them in your library, but stop them from shaping your picks. Good for kids' music or someone else's albums.</div></div>` : ""}
     <div style="height:30px"></div>`;
+  $("drawer").querySelector(".alb-kinds")?.addEventListener("click", e => {
+    const b = e.target.closest("button[data-kind]"); if (!b) return;
+    r.albKind = b.dataset.kind;
+    $("drawer").querySelectorAll(".alb-kinds button").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-pressed", x === b); });
+    $("drawer").querySelectorAll(".albums button[data-alb]").forEach(x => { x.hidden = x.dataset.kind !== r.albKind; });
+    const box = $("albBox"); if (box && !box.hidden && r.albums[+box.dataset.i] && albumKind(r.albums[+box.dataset.i]) !== r.albKind) box.hidden = true;
+  });
   if (loading) $("drawer").scrollTop = 0;   // a newly opened artist starts at the top
   else if (r.has_songs) checkAlbumsOwned(r);   // their songs may be in Plex under another album artist, e.g. as a featured guest
   const st = $("seenStars");
   if (st) { st.onclick = e => { const b = e.target.closest("[data-star]"); if (b) rateArtist(starValue(b, e)); }; starHover(st); }
   paintTracks();
+}
+// The artist page splits albums into studio albums, EPs, live albums, compilations and remixes/demos, so the
+// albums people mean when they say "their albums" aren't buried under best-ofs and live sets.
+const ALB_KINDS = [["album", "Albums"], ["ep", "EPs"], ["live", "Live"], ["compilation", "Compilations"], ["other", "Remixes & more"]];
+const albumKind = a => a.kind || (a.type === "ep" ? "ep" : "album");
+function albumKindTabs(r) {
+  const n = {}; (r.albums || []).forEach(a => { const k = albumKind(a); n[k] = (n[k] || 0) + 1; });
+  const kinds = ALB_KINDS.filter(([k]) => n[k]);
+  if (!kinds.some(([k]) => k === r.albKind)) r.albKind = kinds[0][0];   // studio albums first when there are any
+  if (kinds.length < 2) return "";
+  return `<div class="pills alb-kinds" role="group" aria-label="Kinds of release">${kinds.map(([k, label]) =>
+    `<button type="button" data-kind="${k}" class="${k === r.albKind ? "on" : ""}" aria-pressed="${k === r.albKind}">${label} <small>${n[k]}</small></button>`).join("")}</div>`;
 }
 function showAlbum(i) {
   const r = current, a = r.albums[i], box = $("albBox");
@@ -459,7 +478,10 @@ let albCheckFor = null;
 async function checkAlbumsOwned(r) {
   if (albCheckFor === r.key) return;
   albCheckFor = r.key;
-  const todo = (r.albums || []).slice(0, 24).map((a, i) => [a, i]).filter(([a]) => !a.owned && a.id);
+  // studio albums and EPs first; at most 60 per artist (Bing Crosby has hundreds of releases)
+  const order = { album: 0, ep: 1, live: 2, other: 3, compilation: 4 };
+  const todo = (r.albums || []).map((a, i) => [a, i]).filter(([a]) => !a.owned && a.id)
+    .sort(([a], [b]) => order[albumKind(a)] - order[albumKind(b)]).slice(0, 60);
   const worker = async () => {
     while (todo.length) {
       if (current?.key !== r.key) return;   // you've opened someone else

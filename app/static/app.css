@@ -766,3 +766,5 @@ input[type=search]::-webkit-search-cancel-button:hover { opacity: 1; }
 .gap.few .scroll-btn { display: none; }
 .gap-sec { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); font-weight: 600; margin: 6px 0 16px; }
 @media (max-width: 560px) { .gaps > .gap.few { width: 100%; } .gap.few .hscroll { overflow-x: auto; } }
+.alb-kinds { margin: 2px 0 14px; }
+.alb-kinds button small { opacity: .75; margin-left: 2px; }

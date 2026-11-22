@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, auth, security, config, db, engine
-from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, SpotifyNoDevice, album_key, owned_track, special_release, artist_key, artist_source, credit_keys, original_date, song_key, song_keys, tracks_owned as _tracks_owned, owns_every_track as _owns_every_track,
+from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, OpenArtists, Plex, Spotify, SpotifyNoDevice, album_key, owned_track, special_release, artist_key, artist_source, credit_keys, original_date, release_kind, song_key, song_keys, tracks_owned as _tracks_owned, owns_every_track as _owns_every_track,
                       listenbrainz_top_artists, parse_spotify_export, parse_youtube_music, spotify_auth_url, spotify_exchange, spotify_pasted, spotify_redirect,
                       SPOTIFY_HELPER, SPOTIFY_LOOPBACK)
 from .sync import Syncer, friendly_error
@@ -792,8 +792,10 @@ def artist(key: str, name: str = ""):
             owned = _owns_every_track(db.cache_get(f"dzalb:{a['id']}", 30), nm, a["title"], songs)
         albums.append({**a, "owned": owned, "plex_rk": plex_rk.get(ak)})
     groups = _release_groups(key, info.get("mbid") or (lib or {}).get("mbid"))
+    studio = {album_key(g.get("title")) for g in groups} - {""}
     for a in albums:
         a["date"] = original_date(a, groups)
+        a["kind"] = release_kind(a["title"], a.get("type"), studio, a["date"])
     albums.sort(key=lambda a: a.get("date") or "", reverse=True)
     fb = db.feedback().get(key)
     out = {

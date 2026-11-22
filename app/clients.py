@@ -136,17 +136,37 @@ def _exact_key(title):
     """The title with its version label kept: "Neon Medusa (Live)" is "neonmedusalive", not "neonmedusa"."""
     s = unicodedata.normalize("NFKD", _numbered(title).translate(_PLAIN)).encode("ascii", "ignore").decode().lower()
     s = re.sub(r"[\(\[]\s*(?:feat|ft|featuring|with)\.?\s[^\)\]]*[\)\]]", "", s).replace("&", " and ")
+    s = re.sub(r"\bversion\b", "", s)   # "(Instrumental Version)" is "(Instrumental)"
     return re.sub(r"[^a-z0-9]+", "", s)
 
 
-_BY_ARTIST = {"id": None, "n": 0, "by": {}, "seen": {}}
+_BY_ARTIST = {"ref": None, "n": 0, "by": {}, "seen": {}}
 
 
 def _typo(a, b, difflib):
-    if a == b or abs(len(a) - len(b)) > 2 or a[0] != b[0]:
+    """Two spellings of one title: a letter or two added or dropped anywhere ("Reelin'" / "Reeling"); in titles of
+    14 letters or more, also one short word dropped from the middle ("If I Could Build My (Whole) World Around You")
+    or one letter swapped ("Adeste Fideles" / "Fidelis"). Never a changed number: "Part 1" isn't "Part 2"."""
+    if not a or not b or a == b:
+        return a == b
+    if a.startswith("the") != b.startswith("the"):   # "The City in the Clouds" / "City in the Clouds"
+        a, b = re.sub(r"^the", "", a), re.sub(r"^the", "", b)
+        if a == b:
+            return len(a) >= 8
+    if not a or not b or a[0] != b[0] or abs(len(a) - len(b)) > 5:
         return False
     ops = [o for o in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes() if o[0] != "equal"]
-    return all(o[0] in ("insert", "delete") for o in ops) and sum(max(o[2] - o[1], o[4] - o[3]) for o in ops) <= 2
+    if all(o[0] in ("insert", "delete") for o in ops) and sum(max(o[2] - o[1], o[4] - o[3]) for o in ops) <= 2:
+        return True
+    if len(ops) != 1 or min(len(a), len(b)) < 14:
+        return False
+    tag, i1, i2, j1, j2 = ops[0]
+    if any(c.isdigit() for c in a[i1:i2] + b[j1:j2]):
+        return False
+    if tag == "replace":
+        return i2 - i1 == 1 and j2 - j1 == 1
+    lo, hi, longer = (i1, i2, a) if tag == "delete" else (j1, j2, b)
+    return hi - lo <= 5 and 0 < lo and hi < len(longer)   # in the middle: "...Love Me Too" isn't "...Love Me"
 
 
 def _near_song(artist_keys, keys, songs):
@@ -155,13 +175,13 @@ def _near_song(artist_keys, keys, songs):
     others don't count, since that's how different words differ: "Run the World" isn't "Rule the World"."""
     import difflib
     idx = _BY_ARTIST
-    if idx["id"] != id(songs) or idx["n"] != len(songs):
+    if idx["ref"] is not songs or idx["n"] != len(songs):
         by = {}
         for k in songs:
             if not k.startswith("album:"):
                 a, _, s = k.partition("|")
                 by.setdefault(a, []).append(s)
-        idx.update(id=id(songs), n=len(songs), by=by, seen={})
+        idx.update(ref=songs, n=len(songs), by=by, seen={})
     for sk in keys:
         if len(sk) < 8:
             continue
@@ -215,20 +235,48 @@ def tracks_owned(tracks, artist, album_title, songs):
     """Which of an album's tracks you own in Plex."""
     if not songs:
         return [False] * len(tracks)
-    special, on_album = bool(_VERSION.search(album_title or "")), album_key(album_title)
+    v = _VERSION.search(album_title or "")
+    special, on_album = bool(v), album_key(album_title)
+    label = re.sub(r"(es|s)$", "", re.sub(r"[^a-z]", "", v.group(1).lower())) if v else ""   # "Instrumentals" → "instrumental"
     out = []
     for t in tracks:
         title, keys = t.get("title") or "", song_keys(t.get("title"))
         aks = credit_keys(artist) | credit_keys(t.get("artist") or "")
         if any(f"album:{on_album}|{sk}" in songs for sk in keys):   # on this very album in your Plex
             out.append(True)
-        elif special and not _VERSION.search(title):   # a live, demo or instrumental album: only that album counts
-            out.append(False)
+        elif special and not _VERSION.search(title):   # a live, demo or instrumental album: that album, or tracks labelled so
+            out.append(any(f"{a}|{_exact_key(title)}{label}" in songs for a in aks))
         elif _VERSION.search(title):   # a Live, Demo, Remix or Instrumental version: only that version counts
             out.append(any(f"{a}|{_exact_key(title)}" in songs for a in aks))
         else:
             out.append(any(f"{a}|{sk}" in songs for sk in keys for a in aks) or _near_song(aks, keys, songs))
     return out
+
+
+_LIVE_RELEASE = re.compile(r"[(\[\-–:]\s*live\b|\blive (at|in|from|on)\b|^live\b|\blive\s*$|\bunplugged\b|\bin concert\b", re.I)
+_OTHER_RELEASE = re.compile(r"\b(remix(es|ed)?|rmx|instrumentals?|acoustic|karaoke|demos?|a ?cappella|reimagined|mixes)\b"
+                            r"|[(\[\-–:].*\bmix\b", re.I)
+_COMP_RELEASE = re.compile(r"\b(rarities|rare tracks|b[- ]?sides|best of|greatest hits|anthology|essentials?|collection|singles"
+                           r"|the very best|masters|number ones|super hits|complete|ultimate|playlist|definitive|retrospective)\b", re.I)
+
+
+def release_kind(title, record_type=None, studio=None, date=None):
+    """Which artist-page tab an album goes in: "album", "ep", "live", "compilation" or "other" (remixes, demos,
+    acoustic and instrumental versions). studio: album keys of the artist's studio albums and EPs on MusicBrainz;
+    when known, an album more than a year old that isn't one of them (and isn't live or a remix) is a compilation.
+    Newer ones may just not be on MusicBrainz yet."""
+    t = title or ""
+    if _LIVE_RELEASE.search(t):
+        return "live"
+    if _OTHER_RELEASE.search(t):
+        return "other"
+    if _COMP_RELEASE.search(t):
+        return "compilation"
+    if studio and (date or "9999")[:4] < str(time.gmtime().tm_year - 1):
+        k = album_key(t)
+        if not (k in studio or any(len(s) >= 5 and k.startswith(s) for s in studio)):   # "…(The Silver Album)"
+            return "compilation"
+    return "ep" if record_type == "ep" else "album"
 
 
 def owns_every_track(tracks, artist, album_title, songs):

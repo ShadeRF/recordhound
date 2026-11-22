@@ -701,3 +701,36 @@ def test_name_check_lists_titles_that_look_misspelled_in_plex(client, monkeypatc
         db.set_meta("plex_songs", keep)
         db.conn().execute("DELETE FROM cache WHERE k IN (?, 'dzalb:902')", ("dz:" + k,))
         db.commit()
+
+
+def test_matching_rules_from_the_second_report():
+    from app.clients import song_keys, tracks_owned
+    keys = lambda a, *titles: {f"{a}|{k}": "1" for t in titles for k in song_keys(t)}
+    songs = {**keys("corrs", "Toss the Feathers (Instrumental)"), **keys("marvingaye", "If I Could Build My World Around You",
+             "Little Boy, Little Ole Girl"), **keys("bingcrosby", "Adeste Fidelis (O Come All Ye Faithful)"),
+             **keys("johnwilliams", "City in the Clouds"), **keys("daphnelovesderby", "Bedroom (Demo)"),
+             **keys("somebody", "Somebody Loves Me"), **keys("pinkfloyd", "Another Brick in the Wall, Part 1")}
+    have = lambda artist, title, album="Album": tracks_owned([{"title": title}], artist, album, songs)[0]
+    assert have("The Corrs", "Toss the Feathers (Instrumental Version)")             # "Version" changes nothing
+    assert have("Marvin Gaye", "If I Could Build My Whole World Around You")         # a word dropped in the middle
+    assert have("Marvin Gaye", "Little Ole Boy, Little Ole Girl")
+    assert have("Bing Crosby", "Adeste Fideles (O Come All Ye Faithful)")             # one letter swapped
+    assert have("John Williams", "The City in the Clouds")
+    assert have("Daphne Loves Derby", "Bedroom", album="Exit (Demo)")                # plain names on a demo album
+    assert not have("Daphne Loves Derby", "Breathe", album="Exit (Demo)")
+    assert not have("Somebody", "Somebody Loves Me Too")                             # a word added at the end: another song
+    assert not have("Pink Floyd", "Another Brick in the Wall, Part 3")               # numbers never fuzzy
+
+
+def test_release_kinds_for_the_artist_page_tabs():
+    from app.clients import album_key, release_kind
+    studio = {album_key(t) for t in ("Abandoned Luncheonette", "Voices", "Daryl Hall & John Oates", "Whole Oats")}
+    kind = lambda title, t="album", date="1990-01-01": release_kind(title, t, studio, date)
+    assert kind("Voices") == "album" and kind("Whole Oats (Remastered)") == "album"
+    assert kind("Daryl Hall & John Oates (The Silver Album)") == "album"
+    assert kind("Live at the Apollo") == "live" and kind("Livetime") == "compilation"   # live on MusicBrainz, not a studio album
+    assert kind("Greatest Hits Live") == "live" and kind("The Essential Collection") == "compilation"
+    assert kind("Extended Mixes") == "other" and kind("Single Mixes") == "other"
+    assert kind("Hall and Oates", date="2017-01-01") == "compilation"                # not a studio album on MusicBrainz
+    assert kind("Brand New Record", date="2099-01-01") == "album"                    # too new for MusicBrainz: trust it
+    assert release_kind("Some Record", "ep") == "ep" and release_kind("Some Record") == "album"   # no MusicBrainz list
