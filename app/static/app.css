@@ -760,8 +760,8 @@ input[type=search]::-webkit-search-cancel-button:hover { opacity: 1; }
 .gaps { display: flex; flex-wrap: wrap; gap: 0 40px; align-items: flex-start; }
 .gaps > .gap { flex: 1 1 100%; min-width: 0; }
 .gaps > .gap.few { flex: 0 0 auto; width: calc(max(var(--n), 2) * 174px - 16px); max-width: 100%; }   /* as wide as its posters */
-.gap.few .gap-head { min-height: 82px; align-items: flex-start; }   /* room for a two-line name, so posters line up */
-.gap.few .gap-head h3 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.gap.few .gap-head > div { min-width: 0; }   /* one-line names (full name on hover) keep every block the same height */
+.gap.few .gap-head h3 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gap.few .hscroll { overflow: visible; }
 .gap.few .scroll-btn { display: none; }
 .gap-sec { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); font-weight: 600; margin: 6px 0 16px; }

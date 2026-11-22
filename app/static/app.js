@@ -665,7 +665,7 @@ async function loadGaps() {
   listShell("Albums you're missing", `${what.length > 1 ? what.slice(0, -1).join(", ") + " and " + what.at(-1) : "Albums"} from artists you already collect, most popular first.`.replace(/^./, c => c.toUpperCase()),
     d.groups.length ? gapSections(d.groups, g => g.albums.length, (g, few) => `<div class="gap${few ? " few" : ""}" style="--n:${g.albums.length}"><div class="gap-head" data-open-artist="${esc(g.key)}">
         <span class="gap-ph" style="background-image:url('${esc(g.picture || "")}')"></span>
-        <div><h3>${esc(g.name)}</h3><div class="muted">You have ${g.owned} of ${g.total}</div><div class="meter"><i style="width:${Math.round(g.owned / g.total * 100)}%"></i></div></div></div>
+        <div><h3 title="${esc(g.name)}">${esc(g.name)}</h3><div class="muted">You have ${g.owned} of ${g.total}</div><div class="meter"><i style="width:${Math.round(g.owned / g.total * 100)}%"></i></div></div></div>
         <div class="hwrap"><button class="scroll-btn l" aria-label="Scroll left">${ICON.left}</button><div class="hscroll" data-list>${g.albums.map(a => albumCard(a)).join("")}</div><button class="scroll-btn r" aria-label="Scroll right">${ICON.right}</button></div></div>`)
       : `<div class="empty">${d.at ? "Nothing missing. Your collection is complete." : "This fills in after your next full sync."}</div>`, opts);
   document.querySelectorAll("[data-gap-opt]").forEach(cb => cb.onchange = async () => {
@@ -1277,11 +1277,11 @@ function renderSettings() {
         <span class="muted">${S.stats.history.spotify_export ? `${S.stats.history.spotify_export.toLocaleString()} artists imported ${S.stats.spotify_export_at ? new Date(S.stats.spotify_export_at * 1000).toLocaleDateString() : ""}` : ""}</span></div>
       ${S.stats.spotify_export_old ? `<p class="help">This file was imported by an older version that counted every play of 30 seconds or more. Upload it again and Recordhound counts how long you actually listened, so quick skips count for less.</p>` : ""}
       <h4>2 · Connect your account</h4>
-      <p class="sub">Keeps your top artists, followed artists and saved albums up to date on every sync. Spotify only allows this through a personal developer app, which needs Spotify Premium and works for up to 5 people.</p>
+      <p class="sub">Keeps your top artists, followed artists, saved albums and Liked Songs up to date on every sync, and lets play buttons play full songs. Spotify only allows this through a personal developer app, which needs Spotify Premium and works for up to 5 people.</p>
       ${spConnected ? `<p>✓ Connected${spAge != null ? ` ${spAge} day${spAge === 1 ? "" : "s"} ago` : ""}. ${S.stats.history.spotify ? `${S.stats.history.spotify} artists.` : ""}
           ${S.spotify_can_play === false ? `<b>Reconnect once so play buttons can start songs in your Spotify app.</b>` : ""}</p>
         <div class="opt"><label class="inline"><input type="checkbox" data-k="SPOTIFY_PLAY" ${val("SPOTIFY_PLAY") ? "checked" : ""}> Play buttons play the full song in Spotify ${srcTag("SPOTIFY_PLAY")}</label>
-          <p class="help">On the Spotify app you're using, or your computer's. Songs that aren't on Spotify, or times no Spotify app is open, get the 30-second preview. Turn it off to always hear previews.</p></div><p>
+          <p class="help">In the Spotify app on your computer, or on your phone when you're browsing on it; never on a speaker, receiver or TV. Songs that aren't on Spotify, or times no Spotify app is open, get the 30-second preview. Turn it off to always hear previews.</p></div><p>
           ${spAge != null && spAge > 160 ? `<b>Spotify ends connections after six months, so reconnect soon.</b>` : ""}</p>
         <div class="filerow"><button class="btn" data-test="spotify">Test connection</button><button class="btn" id="spReconnect">Reconnect</button><button class="btn warn" id="spDisconnect">Disconnect</button><span class="tres" id="tres-spotify"></span></div>
         ${spPaste ? "" : `<p class="help"><button class="link accent" id="spPasteShow">Didn't come back after reconnecting? Paste the address instead</button></p>${spPasteBox}`}${spOld}`

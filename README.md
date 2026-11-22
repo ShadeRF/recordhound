@@ -24,6 +24,10 @@ Sibling app for movies and TV: [Filmhound](https://github.com/ShadeRF/filmhound)
     <td width="50%"><img src="https://raw.githubusercontent.com/ShadeRF/unraid-templates/main/screenshots/recordhound-rate.jpg" alt="The Rate page: rate the artists you play, one at a time"><br><sub>Rate the artists you play; ratings go to Plex and Plexamp too.</sub></td>
     <td width="50%" align="center"><img src="https://raw.githubusercontent.com/ShadeRF/unraid-templates/main/screenshots/recordhound-phone.jpg" width="45%" alt="For You on a phone"><br><sub>Works on your phone.</sub></td>
   </tr>
+  <tr>
+    <td width="50%"><img src="https://raw.githubusercontent.com/ShadeRF/unraid-templates/main/screenshots/recordhound-liked.jpg" alt="Missing › Liked songs: songs you've liked on Spotify that aren't in Plex"><br><sub>Missing › Liked songs: everything you've liked on Spotify that isn't in Plex yet. Play it, or send the album to Lidarr.</sub></td>
+    <td width="50%"><img src="https://raw.githubusercontent.com/ShadeRF/unraid-templates/main/screenshots/recordhound-album.jpg" alt="An artist page with an album open: its tracks, with the ones you own ticked and the one you liked marked"><br><sub>Open any album for its track list: ✓ for what you own, ♥ for what you've liked.</sub></td>
+  </tr>
 </table>
 
 <sub>Screenshots show a demo library.</sub>
@@ -68,7 +72,7 @@ The container runs as `99:100` by default (`PUID`, `PGID`, `UMASK` change that).
 |---|---|
 | `:latest` | Stable releases. Recommended. |
 | `:nightly` | Built each night from the newest code, when there's anything new. New features first, and occasionally a bug. |
-| `:0.13.0` or `:0.13` | One exact release (or the newest fix in that line). Use it to stay put or to roll back if a release causes trouble. |
+| `:0.14.0` or `:0.14` | One exact release (or the newest fix in that line). Use it to stay put or to roll back if a release causes trouble. |
 | `:edge` | Test builds, published whenever a change is being tried out, sometimes several times a day. Expect rough edges; only use it if you're helping test. |
 
 Your settings and data carry over when you switch, so you can move between them any time.
@@ -84,17 +88,17 @@ Your settings and data carry over when you switch, so you can move between them 
 - **All Picks:** every pick with genre include/exclude, how well known an artist is (deep cuts, mid, well known), and sorting.
 - **Missing:** everything that isn't yours yet, in four views.
   - **Artists:** artists you play a lot on ListenBrainz, Spotify, YouTube Music or Last.fm but don't own in Plex (or Lidarr), most-played first. The best list to send to Lidarr.
-  - **Liked songs:** the songs you've liked on Spotify that aren't in Plex, grouped by album, newest like first. Owning any version of a song counts (a remaster, a live take, the same song on a compilation). Send an album to Lidarr (only that album is monitored), hide the ones you don't want, or make a Plex playlist of the liked songs you do own, for Plexamp. Needs the Spotify account connection.
-  - **Albums:** albums you're missing from artists you already collect.
+  - **Liked songs:** the songs you've liked on Spotify that aren't in Plex, one row per song, newest like first. Group them by album or artist, sort them, or filter by name. Owning any version of a song counts (a remaster, a live take, the same song on a compilation), and a single you liked is shown with the album it later came out on (found during full syncs). Play a song on Spotify, send its single, EP or album to Lidarr (only that release is monitored), hide songs or albums you don't want, or make a Plex playlist of the liked songs you do own, for Plexamp. Needs the Spotify account connection.
+  - **Albums:** albums you're missing from artists you already collect. Tick **EPs** or **Remixes, live albums, compilations and reissues** to include those too. Artists missing five or fewer albums sit side by side under *Almost complete*; the rest are under *More to find*.
   - **New releases** from artists you love, including announced albums from MusicBrainz.
-- **Your Library:** albums you own but have never played, ranked by how much you like the artist and how well they fit your taste, each with a reason. One click puts the top 25, 50 or 100 in a Plex playlist for Plexamp.
-- **Rate:** rate the artists you play, one at a time (keys 1–5; hold Shift for a half star). Ratings go to the artist in Plex. You can also rate picks you already know, so they stop being suggested and shape the rest. Every artist page has a **Rate** button too.
-- **Artist pages:** 30-second previews, why it was picked, bio, albums with the ones you own marked, similar artists, *More like this*, and links to Spotify, Apple Music, Bandcamp, YouTube, MusicBrainz and Last.fm. Open artists you own straight in Plex.
+- **Your Library:** albums you own but have never played, ranked by how much you like the artist and how well they fit your taste, each with a reason. One click puts the top 25, 50 or 100 in a Plex playlist for Plexamp. Soundtracks and compilations you haven't played are included, ranked by the artists on them; untick *Include soundtracks and compilations* in Settings → Plex to leave them out.
+- **Rate:** rate the artists you play, one at a time (tap the stars, or press 1–5; hold Shift for a half star). Ratings go to the artist in Plex. You can also rate picks you already know, so they stop being suggested and shape the rest, or press K if you know them but don't want to rate them. Every artist page has a **Rate** button too.
+- **Artist pages:** songs to play, why it was picked, bio, albums with the ones you own marked, similar artists, *More like this*, and links to Spotify, Apple Music, Bandcamp, YouTube, MusicBrainz and Last.fm. Open artists you own straight in Plex. Click an album for its track list, with ✓ on tracks you own and ♥ on ones you've liked on Spotify; from there, open it in Plex, add just that album to Lidarr, or play it on Spotify. An album counts as owned once you have every track, even when Plex files them under another artist (a featured guest, or a compilation).
 - **Lidarr:** add artists with your quality and metadata profiles and choose what to monitor.
-- **Save for later**, **Not interested**, **Already know them** (stops suggesting them without counting as a dislike), and **Don't learn from** for kids' music, someone else's albums or genres. A whole Plex library can be set to *Own only* (counts as yours, doesn't shape your picks) or *Ignore*.
-- **History:** everything you've hidden or marked, with undo.
+- **Save for later**, **Not interested**, **Already know them** (stops suggesting them without counting as a dislike), and **Don't learn from** for kids' music, someone else's albums, soundtracks and compilations, or any genre in your library (*More genres…* lists them all). Each Plex library is *Use*, *Own only* (counts as yours, doesn't shape your picks) or *Ignore*, on the Plex card in Settings or during setup.
+- **History:** everything you've hidden or marked, with search and undo.
 - **Search** for any artist.
-- **Settings page** for every connection, with a **Test** button for each, and optional sign-in.
+- **Settings page** for every connection, with a **Test connection** button for each, and optional sign-in. Saved keys show only their last four characters, and an eye button lets you check what you type. **Reset all feedback** clears the History page in one go.
 
 ## How it picks
 
@@ -115,7 +119,7 @@ Score = 55% "your artists point here" + 35% taste match + 10% popularity. Every 
 | Wikipedia | Automatic, no key | Artist bios |
 | ListenBrainz account | Optional | Your listening history (public profile) |
 | Spotify history file | Optional | Upload the zip from spotify.com/account/privacy. No developer account needed |
-| Spotify account | Optional | Top, followed and saved artists, and your Liked Songs, kept current. Needs a personal Spotify developer app (Spotify requires Premium and allows 5 users per app) |
+| Spotify account | Optional | Top, followed and saved artists, and your Liked Songs, kept current. Play buttons can play full songs in your Spotify app. Needs a personal Spotify developer app (Spotify requires Premium and allows 5 users per app) |
 | YouTube Music history file | Optional | Upload your watch history from Google Takeout. Only YouTube Music plays count |
 | Last.fm | Optional | See below |
 | Lidarr | Optional | Adding artists |
@@ -130,7 +134,7 @@ If you scrobble to ListenBrainz as well, that's a free way to bring in your hist
 
 ### Listening on other services
 
-**YouTube Music:** upload your history in Settings → YouTube Music. At [takeout.google.com](https://takeout.google.com), deselect everything, tick **YouTube and YouTube Music**, and under *All YouTube data included* keep only **history**. Only YouTube Music plays count, not regular YouTube videos. Upload a newer export now and then, or use ListenBrainz below to keep plays counting as you go.
+**YouTube Music:** upload your history in Settings → YouTube Music. At [takeout.google.com](https://takeout.google.com), click **Deselect all**, tick **YouTube and YouTube Music**, and under *All YouTube data included* keep only **history**. Only YouTube Music plays count, not regular YouTube videos. Upload a newer export now and then, or use ListenBrainz below to keep plays counting as you go.
 
 Recordhound doesn't connect to Apple Music, Deezer, Tidal or other services directly, but ListenBrainz can collect your plays from them (YouTube Music too) for free:
 
@@ -149,6 +153,8 @@ Connected Spotify before one-click sign-in? Your connection keeps working, and r
 
 Spotify ends these connections after six months, and Settings reminds you.
 
+**Playing full songs:** with your Spotify account connected, play buttons play the whole song in your Spotify app instead of a 30-second preview. They use the Spotify app on your computer, or on your phone when you're using Recordhound on your phone, never a speaker, receiver or TV. Songs that aren't on Spotify, or times no Spotify app is open, get the preview. Like the connection itself, this needs Spotify Premium. Connected Spotify before 0.14.0? Click **Reconnect** in Settings → Spotify once to allow playback. To always hear previews, untick *Play buttons play the full song in Spotify*.
+
 ## HTTPS
 
 Run it behind a reverse proxy (Nginx Proxy Manager, SWAG, Caddy, Traefik or `tailscale serve`) at the root of a domain or subdomain. Proxies on your own network are trusted automatically; set `TRUSTED_PROXIES` to narrow that.
@@ -160,6 +166,8 @@ Turn on sign-in in Settings before reaching it from outside your home.
 - Star ratings are the biggest lever. The **Rate** page makes it quick, and the ratings go to Plex and Plexamp too.
 - Picks feel stuck on an old phase? Raise *What you've played lately* in Settings.
 - Listening outside Plex only counts once you've played an artist a few times (3 by default; *Plays before outside listening counts* in Settings), so checking someone out once doesn't steer your picks. Spotify history files count listening time, so skipping through songs adds up to less than one play each.
+- Soundtracks and compilations (Various Artists, Original Soundtrack and the like): a song you play from one counts for the artist who sang it. A film score by one composer, such as John Williams, counts as that composer's album. To keep them out of your taste, use *Albums to leave out* under *Don't learn from* in Settings.
+- Names don't have to match exactly. Titles with or without brackets (*(Remastered)*, *(feat. …)*), featured artists, styled names like CHVRCHΞS, and one artist spelled two ways (when MusicBrainz knows they're the same) are all matched.
 - The Plex playlist is named *Recordhound: Unplayed albums* and is replaced each time you make it. Set `PLEX_PLAYLIST` to change the name.
 - Too many obscure picks? Raise *Minimum Deezer fans* (or *Minimum Last.fm listeners* with a Last.fm key). Too mainstream? Lower it and look at *Deep cuts*.
 - Every setting can also come from an environment variable with the same name (`PLEX_URL`, `LIDARR_URL`…). Anything saved on the Settings page wins.
