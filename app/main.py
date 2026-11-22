@@ -636,6 +636,10 @@ def artist(key: str, name: str = ""):
                 tracks = []
     owned_albums = {album_key(t) for t in (lib or {}).get("albums", [])}
     plex_rk = {album_key(a.get("title")): a.get("rk") for a in db.get_meta("plex_albums") or [] if a.get("artist_key") == key} if lib else {}
+    # An album counts as yours when every track is in Plex, however Plex files it: under another album artist
+    # ("Sun City" with this artist featured), on a compilation, or under other album names.
+    songs = db.get_meta("plex_songs") or {}
+    has_songs = bool(songs)
     albums, seen = [], set()
     for a in dz.get("albums", []):
         ak = album_key(a["title"])
@@ -643,8 +647,8 @@ def artist(key: str, name: str = ""):
             continue
         seen.add(ak)
         owned = ak in owned_albums
-        if not owned and lib:   # every track is in Plex, just filed under other album names
-            owned = _owns_every_track(db.cache_get(f"dzalb:{a['id']}", 30), nm, a["title"], db.get_meta("plex_songs"))
+        if not owned and has_songs:   # every track is in Plex, filed under other album names or another album artist
+            owned = _owns_every_track(db.cache_get(f"dzalb:{a['id']}", 30), nm, a["title"], songs)
         albums.append({**a, "owned": owned, "plex_rk": plex_rk.get(ak)})
     albums.sort(key=lambda a: a.get("date") or "", reverse=True)
     fb = db.feedback().get(key)
@@ -656,7 +660,7 @@ def artist(key: str, name: str = ""):
         "picture": dz.get("picture"), "deezer_id": dz.get("id"), "fans": dz.get("fans") or info.get("fans"),
         "tracks": tracks or [], "albums": albums,
         "similar": [{"key": artist_key(n), "name": n, "match": m} for n, m in info.get("similar", [])[:24]],
-        "owned": bool(lib), "plex_key": (lib or {}).get("plex_key"), "plays": (lib or {}).get("plays"),
+        "owned": bool(lib), "has_songs": has_songs, "plex_key": (lib or {}).get("plex_key"), "plays": (lib or {}).get("plays"),
         "rating": (lib or {}).get("rating"), "owned_albums": len((lib or {}).get("albums", [])),
         "sources": (hist or {}).get("sources", {}), "in_lidarr": key in set(db.get_meta("lidarr_keys", [])),
         "feedback": fb["action"] if fb else None, "saved": key in db.saved(), "noseed": key in db.noseed(),

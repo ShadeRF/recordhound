@@ -422,7 +422,7 @@ function renderDrawer(r, loading) {
       <div class="help" style="color:var(--dim);font-size:12px;margin:4px 0 0 24px">Keep them in your library, but stop them from shaping your picks. Good for kids' music or someone else's albums.</div></div>` : ""}
     <div style="height:30px"></div>`;
   if (loading) $("drawer").scrollTop = 0;   // a newly opened artist starts at the top
-  else if (r.owned) checkAlbumsOwned(r);
+  else if (r.has_songs) checkAlbumsOwned(r);   // their songs may be in Plex under another album artist, e.g. as a featured guest
   const st = $("seenStars");
   if (st) { st.onclick = e => { const b = e.target.closest("[data-star]"); if (b) rateArtist(starValue(b, e)); }; starHover(st); }
   paintTracks();

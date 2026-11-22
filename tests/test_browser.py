@@ -1057,3 +1057,31 @@ def test_albums_you_have_every_track_of_show_owned_without_opening_them(page, si
             db.conn().execute("INSERT INTO cache(k, json, at) VALUES (?, ?, ?)", ("dz:" + lib["key"], before[0], before[1]))
         db.set_meta("plex_songs", keep)
         db.commit()
+
+
+def test_albums_by_an_artist_filed_under_someone_else_in_plex_still_show_owned(page, site):
+    from app import db
+    from app.clients import song_key
+    pick = next(r for r in db.recs("new") if r["key"] not in db.library_map())   # not an artist in your library
+    k, name = pick["key"], pick["name"]
+    before = db.conn().execute("SELECT json, at FROM cache WHERE k=?", ("dz:" + k,)).fetchone()
+    db.cache_put("dz:" + k, {"id": 1, "name": name, "albums": [{"id": 46, "title": "Grand Hotel", "type": "ep", "date": "2026-01-01"}]})
+    db.cache_put("dzalb:46", [{"title": "Champagne Arrival", "artist": "Sun City"}, {"title": "Next to You", "artist": "Sun City"}])
+    keep = db.get_meta("plex_songs")
+    # Plex only knows these songs as Sun City's (this artist is featured); Deezer credits them to Sun City too
+    db.set_meta("plex_songs", {f"suncity|{song_key(t)}": "1" for t in ("Champagne Arrival", "Next to You")})
+    db.commit()
+    try:
+        go(page, "home")
+        page.evaluate("([k, n]) => openArtist(k, n)", [k, name])
+        page.wait_for_selector("#drawer button[data-alb='0'] .own-b")
+        page.keyboard.press("Escape")
+        page.evaluate("([k, n]) => openArtist(k, n)", [k, name])   # come back: still owned, straight from the server
+        page.wait_for_selector("#drawer button[data-alb='0']")
+        assert page.locator("#drawer button[data-alb='0'] .own-b").count() == 1
+    finally:
+        db.conn().execute("DELETE FROM cache WHERE k IN (?, 'dzalb:46')", ("dz:" + k,))
+        if before:
+            db.conn().execute("INSERT INTO cache(k, json, at) VALUES (?, ?, ?)", ("dz:" + k, before[0], before[1]))
+        db.set_meta("plex_songs", keep)
+        db.commit()
