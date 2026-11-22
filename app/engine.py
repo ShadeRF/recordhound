@@ -19,7 +19,7 @@ from collections import defaultdict
 SCORE_WEIGHTS = {"collab": 0.55, "content": 0.35, "pop": 0.10}
 JUNK_TAGS = {"seen live", "favorites", "favourite", "favorite", "albums i own", "under 2000 listeners", "spotify",
              "my favorite", "love", "awesome", "beautiful", "cool", "good", "best", "amazing", "check out", "seen in concert"}
-SOURCES = ("plex", "lastfm", "listenbrainz", "spotify", "spotify_export")
+SOURCES = ("plex", "lastfm", "listenbrainz", "spotify", "spotify_export", "youtube_music")
 
 
 # Spotify's account connection gives its own top-artists ranks, not play counts, so it isn't held to a minimum

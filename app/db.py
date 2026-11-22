@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS library (          -- artists in your Plex music libr
     last_played INTEGER,
     added_at INTEGER
 );
-CREATE TABLE IF NOT EXISTS history (          -- listening outside Plex: lastfm, listenbrainz, spotify, spotify_export
+CREATE TABLE IF NOT EXISTS history (          -- listening outside Plex: lastfm, listenbrainz, spotify, spotify_export, youtube_music
     key TEXT NOT NULL,
     source TEXT NOT NULL,
     name TEXT,

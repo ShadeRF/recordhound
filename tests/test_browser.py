@@ -456,3 +456,41 @@ def test_phone_layout(browser, site):
         assert not errors, errors
     finally:
         ctx.close()
+
+
+def test_saved_keys_show_only_their_last_characters_and_typed_keys_can_be_revealed(page):
+    go(page, "settings")
+    page.evaluate("document.getElementById('svc-plex').open = true")
+    field = page.locator('#settingsBody [data-k="PLEX_TOKEN"]')
+    eye = field.locator("xpath=following-sibling::button[@data-eye]")
+    note = page.locator("#svc-plex .saved-note")
+    # the saved token never reaches the page; its last four characters show so you can tell which one it is
+    assert "test-token" not in page.content()
+    assert field.get_attribute("type") == "text" and field.input_value() == "••••••••oken"
+    assert eye.is_hidden() and note.is_visible()
+    # a new key stays hidden while you type, and the eye shows it only on request
+    field.fill("brand-new-token")
+    assert field.get_attribute("type") == "password" and eye.is_visible() and note.is_hidden()
+    eye.click()
+    assert field.get_attribute("type") == "text" and eye.get_attribute("aria-pressed") == "true"
+    eye.click()
+    assert field.get_attribute("type") == "password"
+    field.fill("")
+    assert eye.is_hidden()
+
+
+def test_youtube_music_history_upload_and_remove(page, tmp_path):
+    import json
+    f = tmp_path / "watch-history.json"
+    f.write_text(json.dumps([{"header": "YouTube Music", "title": "Watched Idioteque", "titleUrl": "https://music.youtube.com/watch?v=a",
+                              "subtitles": [{"name": "Radiohead - Topic", "url": "https://www.youtube.com/channel/UCx"}],
+                              "time": "2026-11-02T21:14:03.120Z"}] * 4))
+    go(page, "settings")
+    page.evaluate("document.getElementById('svc-youtube').open = true")
+    card = page.locator("#svc-youtube")
+    assert "Not set up" in card.locator("summary").inner_text()
+    page.set_input_files("#ytFile", str(f))
+    page.wait_for_function("document.querySelector('#svc-youtube summary').innerText.includes('History uploaded')")
+    assert "1 artist imported" in card.inner_text()
+    card.locator("#ytRemove").click()
+    page.wait_for_function("document.querySelector('#svc-youtube summary').innerText.includes('Not set up')")

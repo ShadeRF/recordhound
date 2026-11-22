@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from . import __version__, auth, security, config, db, engine
 from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, album_key, artist_key, artist_source,
-                      listenbrainz_top_artists, parse_spotify_export, spotify_auth_url, spotify_exchange, spotify_pasted, spotify_redirect,
+                      listenbrainz_top_artists, parse_spotify_export, parse_youtube_music, spotify_auth_url, spotify_exchange, spotify_pasted, spotify_redirect,
                       SPOTIFY_HELPER, SPOTIFY_LOOPBACK)
 from .sync import Syncer, friendly_error
 
@@ -861,12 +861,36 @@ async def spotify_export(request: Request):
     return {"ok": True, "artists": len(rows), "plays": round(sum(r["plays"] for r in rows))}
 
 
+@app.post("/api/import/youtube-music")
+async def youtube_music_import(request: Request):
+    data = await security.read_upload(request, 500 * 1024 * 1024, "That file is too big. In Google Takeout, choose only YouTube history.")
+    try:
+        rows = parse_youtube_music(data)
+    except APIError as e:
+        raise HTTPException(400, str(e))
+    except Exception:
+        raise HTTPException(400, "Couldn't read that file. Upload the zip from Google Takeout, or watch-history.json or .html from it.")
+    db.replace_history("youtube_music", rows)
+    db.set_meta("youtube_music_at", int(time.time()))
+    schedule_rescore(5)
+    return {"ok": True, "artists": len(rows), "plays": round(sum(r["plays"] for r in rows))}
+
+
+@app.delete("/api/import/youtube-music")
+def youtube_music_remove():
+    db.replace_history("youtube_music", [])
+    db.set_meta("youtube_music_at", None)
+    schedule_rescore(5)
+    return {"ok": True}
+
+
 # ======================================================================= settings
 
 @app.get("/api/settings")
 def get_settings():
     return {"values": config.public(), "sources": config.sources(), "configured": config.configured(),
             "stats": {**db.stats(), "last_sync": db.get_meta("last_sync"), "spotify_export_at": db.get_meta("spotify_export_at"),
+                      "youtube_music_at": db.get_meta("youtube_music_at"),
                       "spotify_export_old": bool(db.get_meta("spotify_export_at") and not db.get_meta("spotify_export_v"))},
             "spotify_redirect": spotify_redirect(config.SPOTIFY_REDIRECT_URI), "spotify_helper": SPOTIFY_HELPER,
             "spotify_loopback": SPOTIFY_LOOPBACK, "spotify_error": db.get_meta("spotify_error")}

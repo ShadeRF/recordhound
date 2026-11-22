@@ -136,6 +136,11 @@
   .field > label { color: var(--dim); font-size: 13px; }
   .field input[type=text], .field input[type=password], .field select { width: 100%; }
   .field .help { grid-column: 2; color: var(--dim); font-size: 12px; margin-top: -4px; }
+  .secret { position: relative; display: block; min-width: 0; }
+  .secret input { width: 100%; padding-right: 38px; }
+  .secret .eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: 0; color: var(--dim); padding: 5px; border-radius: 6px; line-height: 0; cursor: pointer; }
+  .secret .eye:hover, .secret .eye[aria-pressed=true] { color: var(--text); }
+  .secret .eye:focus-visible { outline: 2px solid var(--accent); }
   .field .help code { background: #221f1c; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
   .src { font-size: 10.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
   .testrow { display: flex; align-items: center; gap: 12px; margin: 2px 0 6px 184px; }

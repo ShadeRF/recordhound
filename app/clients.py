@@ -2,6 +2,7 @@
 import base64
 import functools
 import hashlib
+import html
 import io
 import json
 import logging
@@ -407,11 +408,99 @@ def parse_spotify_export(data):
                 k = artist_key(name)
                 p = plays.setdefault(k, {"key": k, "name": name, "plays": 0.0})
                 p["plays"] += min(ms / 180000, 1.0)
+    return _ranked(plays)
+
+
+def _ranked(plays):
     rows = sorted(plays.values(), key=lambda r: -r["plays"])
     for i, r in enumerate(rows):
         r["plays"] = round(r["plays"], 1)
         r["rank"] = i + 1
     return rows
+
+
+_YT_CHANNEL_JUNK = re.compile(r"\s*(?:-\s*Topic|VEVO|\s-\s*Official)\s*$", re.I)
+_YT_CELL = re.compile(r'class="outer-cell', re.I)
+_YT_HEADER = re.compile(r'mdl-typography--title">\s*(.*?)\s*<br', re.I | re.S)
+_YT_LINK = re.compile(r'<a href="([^"]*)">(.*?)</a>', re.I | re.S)
+
+
+def _yt_artist(channel):
+    """YouTube Music plays are credited to the artist's auto-made channel ("Radiohead - Topic") or their own
+    ("RadioheadVEVO", "Radiohead")."""
+    name = _YT_CHANNEL_JUNK.sub("", html.unescape(channel or "")).strip()
+    return name or None
+
+
+def _yt_plays_json(data):
+    """Takeout's watch-history.json: a list of entries, one per play."""
+    try:
+        entries = json.loads(data.decode("utf-8-sig"))
+    except ValueError:
+        return None
+    if not isinstance(entries, list):
+        return None
+    out = []
+    for e in entries:
+        if not isinstance(e, dict) or e.get("details"):   # details mark ads ("From Google Ads")
+            continue
+        music = e.get("header") == "YouTube Music" or "music.youtube.com" in (e.get("titleUrl") or "")
+        subs = e.get("subtitles") or []
+        if music and subs and isinstance(subs[0], dict):
+            out.append(subs[0].get("name"))
+    return out
+
+
+def _yt_plays_html(data):
+    """Takeout's watch-history.html (the default format): one "outer-cell" block per play, headed by the
+    product, then links to the video and to the channel."""
+    text = data.decode("utf-8", "replace")
+    out = []
+    for cell in _YT_CELL.split(text)[1:]:
+        head = _YT_HEADER.search(cell)
+        body = cell.split("content-cell", 2)
+        links = _YT_LINK.findall(body[1] if len(body) > 1 else "")   # not the footer's "control these settings here" link
+        if "Google Ads" in cell or len(links) < 2:   # removed videos have no channel link
+            continue
+        music = (head and html.unescape(head.group(1)).strip() == "YouTube Music") or "music.youtube.com" in links[0][0]
+        if music:
+            out.append(re.sub(r"<[^>]+>", "", links[1][1]))
+    return out
+
+
+def parse_youtube_music(data):
+    """Google Takeout's YouTube history: the whole zip, or watch-history.json / .html on its own. Only plays
+    in YouTube Music count; regular YouTube videos are left out. Takeout has no listening time, so every play
+    counts as one."""
+    from .security import MAX_UNZIPPED, zip_read
+    files = []
+    if data[:2] == b"PK":
+        z = zipfile.ZipFile(io.BytesIO(data))
+        budget = [MAX_UNZIPPED]
+        # watch history only; folder and file names are translated, so skip what's clearly something else
+        for n in z.namelist():
+            low = n.lower()
+            if low.endswith((".json", ".html")) and "youtube" in low and "search" not in low and "comment" not in low:
+                files.append(zip_read(z, n, budget))
+    else:
+        files.append(data)
+    names, found = [], False
+    for f in files:
+        got = _yt_plays_json(f) if f.lstrip()[:1] in (b"[", b"{", b"\xef") else _yt_plays_html(f)
+        if got is not None:
+            found = found or bool(got)
+            names += got
+    if not found:
+        raise APIError("No YouTube Music plays in that file. Use the watch history from Google Takeout "
+                       "(YouTube and YouTube Music → history).")
+    plays = {}
+    for raw in names:
+        name = _yt_artist(raw)
+        if name:
+            k = artist_key(name)
+            p = plays.setdefault(k, {"key": k, "name": name, "plays": 0.0})
+            p["plays"] += 1
+    return _ranked(plays)
 
 
 # ======================================================================= Deezer (art, albums, previews; no key needed)

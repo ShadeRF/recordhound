@@ -27,7 +27,7 @@ const fmtDate = d => { try { return new Date(d + "T12:00").toLocaleDateString([]
 const initials = n => esc((n || "?").replace(/^the\s+/i, "").split(/\s+/).slice(0, 2).map(w => w[0]).join("").toUpperCase());
 const enc = s => encodeURIComponent(s ?? "").replace(/['()*!]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
 const artURL = r => `/api/art/${enc(r.key)}?name=${enc(r.name)}`;
-const SRC = { lastfm: ["last.fm", "Last.fm"], listenbrainz: ["listenbrainz.org", "ListenBrainz"], spotify: ["spotify.com", "Spotify"], spotify_export: ["spotify.com", "Spotify history"] };
+const SRC = { lastfm: ["last.fm", "Last.fm"], listenbrainz: ["listenbrainz.org", "ListenBrainz"], spotify: ["spotify.com", "Spotify"], spotify_export: ["spotify.com", "Spotify history"], youtube_music: ["music.youtube.com", "YouTube Music"] };
 
 const ICON = {
   hide: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>`,
@@ -722,14 +722,61 @@ const SVC = {
     urlHelp: "Usually <code>http://YOUR-SERVER-IP:32400</code>", keyHelp: "Plex Web → any track → ⋯ → Get Info → View XML. The token is the <code>X-Plex-Token=</code> value in the URL." },
   lastfm: { optional: true, title: "Last.fm", sub: "Optional. Without a key, similar artists and genre tags come from MusicBrainz, ListenBrainz and Deezer. A key switches artist data to Last.fm and lets Recordhound read your scrobbles, but from December 1, 2026 a key only works while its account has <b>Last.fm Pro</b>. Keys are made at last.fm/api/account/create.",
     key: "LASTFM_API_KEY", keyLabel: "API key", user: "LASTFM_USERNAME", userHelp: "Optional, and needs a key. Your scrobbles train your taste, and artists you scrobble a lot but don't own show up under <b>You Stream</b>. If you scrobble to ListenBrainz too, use that below instead: it's free." },
-  listenbrainz: { optional: true, title: "ListenBrainz", sub: "Optional. Your listening history from ListenBrainz (free, open-source scrobbling). Your profile must be public. Listen on Apple Music, YouTube Music, Deezer or Tidal? ListenBrainz can collect those plays: the <b>Web Scrobbler</b> browser extension sends what you play in a web player, and <b>multi-scrobbler</b> runs on your server.", user: "LISTENBRAINZ_USERNAME" },
+  listenbrainz: { optional: true, title: "ListenBrainz", sub: "Optional. Your listening history from ListenBrainz (free, open-source scrobbling). Your profile must be public. Listen on Apple Music, YouTube Music, Deezer or Tidal? ListenBrainz can collect those plays as you go: the <b>Web Scrobbler</b> browser extension sends what you play in a web player, and <b>multi-scrobbler</b> runs on your server.", user: "LISTENBRAINZ_USERNAME" },
   lidarr: { optional: true, title: "Lidarr", sub: "Optional. Add artists straight to Lidarr with your quality and metadata profiles.", url: "LIDARR_URL", key: "LIDARR_API_KEY", keyLabel: "API key",
     urlHelp: "e.g. <code>http://192.168.1.10:8686</code>", keyHelp: "Lidarr → Settings → General → API Key" },
 };
 const val = k => k in draft ? draft[k] : S.values[k];
 const srcTag = k => S.sources[k] === "env" && !(k in draft) ? `<span class="src" title="Set in docker-compose. Saving here overrides it.">from compose</span>` : "";
+// Saved keys never reach the browser: the server sends eight dots plus the key's last four characters. That
+// placeholder is shown as plain text, so you can tell which key is saved. The eye button only reveals what you type.
+const isMasked = v => typeof v === "string" && v.startsWith("••••");
+const isSecret = (k, v) => /TOKEN|KEY|CLIENT_ID/.test(k) || isMasked(v);
+const EYE = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
+function secretInput(attr, k, v, ph) {
+  const m = isMasked(v);
+  return `<span class="secret"><input type="${m ? "text" : "password"}" ${attr}="${k}" data-secret value="${esc(v)}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false">` +
+    `<button type="button" class="eye" data-eye aria-label="Show what you typed" title="Show what you typed" aria-pressed="false" ${m || !v ? "hidden" : ""}>${EYE}</button></span>` +
+    `<div class="help saved-note" ${m ? "" : "hidden"}>Saved. For safety the full key is never shown here; paste a new one to replace it.</div>`;
+}
+document.addEventListener("focusin", e => {   // typing into a saved key replaces it
+  if (e.target.matches && e.target.matches("[data-secret]") && isMasked(e.target.value)) e.target.select();
+});
+document.addEventListener("input", e => {
+  const el = e.target;
+  if (!el.matches || !el.matches("[data-secret]")) return;
+  const eye = el.nextElementSibling, note = el.parentElement.nextElementSibling, m = isMasked(el.value);
+  if (!m && eye.getAttribute("aria-pressed") !== "true") el.type = "password";   // what you type stays hidden until you ask
+  if (m) el.type = "text";
+  eye.hidden = m || !el.value;
+  if (note && note.classList.contains("saved-note")) note.hidden = !m;
+});
+document.addEventListener("click", e => {
+  const b = e.target.closest && e.target.closest("[data-eye]");
+  if (!b) return;
+  const el = b.previousElementSibling, show = el.type === "password";
+  el.type = show ? "text" : "password";
+  b.setAttribute("aria-pressed", String(show));
+  b.title = show ? "Hide" : "Show what you typed";
+  b.setAttribute("aria-label", b.title);
+  el.focus();
+});
 function input(k, type = "text", ph = "") {
-  return `<input type="${/TOKEN|KEY|CLIENT_ID/.test(k) ? "password" : type}" data-k="${k}" value="${esc(val(k))}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false">`;
+  const v = val(k);
+  if (isSecret(k, v)) return secretInput("data-k", k, v, ph);
+  return `<input type="${type}" data-k="${k}" value="${esc(v)}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false">`;
+}
+function ytCard() {
+  const n = S.stats.history.youtube_music, at = S.stats.youtube_music_at;
+  return foldCard("youtube", `<img class="svc" src="${fav("music.youtube.com")}" alt=""> YouTube Music`, n ? pill(true, "History uploaded") : pill(false),
+    "Upload your listening history from Google Takeout.", `
+    <p class="sub">Go to <a href="https://takeout.google.com" target="_blank" rel="noopener">takeout.google.com</a>, click <b>Deselect all</b>, then tick only
+      <b>YouTube and YouTube Music</b>. Under <b>All YouTube data included</b>, keep just <b>history</b>. Google emails you a zip, usually within a few hours.</p>
+    <div class="filerow"><label class="btn">Upload Takeout zip<input type="file" id="ytFile" accept=".zip,.json,.html" hidden></label>
+      ${n ? `<button class="btn warn" id="ytRemove">Remove</button>` : ""}
+      <span class="muted">${n ? `${n.toLocaleString()} artist${n === 1 ? "" : "s"} imported${at ? " " + new Date(at * 1000).toLocaleDateString() : ""}` : ""}</span></div>
+    <p class="help">Only plays in YouTube Music count, not regular YouTube videos. Takeout doesn't say how long you listened, so every play counts as one.
+      A newer upload replaces the last one. To keep your plays counting as you go, use ListenBrainz above.</p>`);
 }
 function svcCard(id, status) {
   const c = SVC[id];
@@ -791,7 +838,7 @@ function renderSettings() {
       : `<ol class="spotify-steps">
           <li>Go to <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a> and create an app (any name). Tick <b>Web API</b>.</li>
           <li>Add this Redirect URI exactly, and save: <code>${esc(S.spotify_redirect)}</code></li>
-          <li>Paste its Client ID here and click <b>Save changes</b>: <div class="field" style="margin:6px 0">${input("SPOTIFY_CLIENT_ID", "text", "Client ID")}</div></li>
+          <li>Paste its Client ID here and click <b>Save changes</b>: <div class="field" style="margin:6px 0;display:block">${input("SPOTIFY_CLIENT_ID", "text", "Client ID")}</div></li>
           <li>Click <button class="btn" id="spConnect">Connect Spotify</button> and approve.
             ${spPaste ? `Spotify then sends you to a page that won't load. <b>That's expected.</b> Copy the whole address from your browser's address bar and paste it here:`
               : `You'll come straight back here. <button class="link accent" id="spPasteShow">Didn't come back? Paste the address instead</button>`}
@@ -801,12 +848,13 @@ function renderSettings() {
         ${spHelper ? `<p class="help">That Redirect URI is a small page that sends you from Spotify back to this Recordhound. It runs in your browser and never sees your Spotify data. <a href="https://github.com/ShadeRF/recordhound-auth" target="_blank" rel="noopener">How it works</a></p>` : ""}`}
       ${advanced("spotify-adv", `<div class="field"><label>Redirect address</label>${input("SPOTIFY_REDIRECT_URI", "text", S.spotify_helper)}
         <div class="help">Leave empty for one-click sign-in through the helper page. If Recordhound is on HTTPS, its own address ending in <code>/callback</code> works too, with no helper page. <code>${esc(S.spotify_loopback)}</code> is the old copy-and-paste way. Whatever is here must match your Spotify app's Redirect URIs exactly.</div></div>`)}
-`)}`,
+`)}
+      ${ytCard()}`,
       "Everything here is optional. Listening outside Plex trains your taste, and artists you play a lot but don't own show up under <b>You Stream</b>.")],
     ["taste", "Your taste", setSection("taste", "Your taste", `<div class="scard">
       ${rangeField("OWNED_WEIGHT", "Artists you own but rarely play", 0, 1, 0.05, "How much your collection shapes your taste even when you haven't played it. Keep it high if your library is curated.", pct)}
       ${rangeField("RECENT_WEIGHT", "What you've played lately", 0, 1.5, 0.1, "Extra pull for artists you've played in the last six months (Plex, plus ListenBrainz if connected). Raise it to follow what you're into now; 0 treats all listening the same.", pct)}
-      ${rangeField("MIN_PLAYS", "Plays before outside listening counts", 1, 20, 1, "Artists you've played fewer times than this on Spotify, ListenBrainz or Last.fm don't shape your picks or show up under You Stream, so checking someone out once doesn't count. Spotify history files count listening time, so ten quick skips add up to less than one play each. Plays in Plex always count.")}
+      ${rangeField("MIN_PLAYS", "Plays before outside listening counts", 1, 20, 1, "Artists you've played fewer times than this on Spotify, YouTube Music, ListenBrainz or Last.fm don't shape your picks or show up under You Stream, so checking someone out once doesn't count. Spotify history files count listening time, so ten quick skips add up to less than one play each. Plays in Plex always count.")}
       <h4>Don't learn from</h4>
       <p class="sub">These stay in your library but stop shaping your picks.</p>
       <div class="field"><label>Plex libraries</label><div id="noseedLibs" class="chips pick"><span class="muted">Sync once to list your libraries.</span></div></div>
@@ -894,6 +942,16 @@ $("settingsBody").addEventListener("change", async e => {
     } catch (err) { toast(err.message); }
     e.target.value = "";   // so picking the same file again after a failure works
   }
+  if (e.target.id === "ytFile" && e.target.files[0]) {
+    toast("Reading your YouTube Music history…");
+    try {
+      const r = await fetch("/api/import/youtube-music", { method: "POST", body: e.target.files[0] });
+      const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.detail || r.statusText || "The upload failed");
+      openCards.add("youtube");
+      toast(`Imported ${d.plays.toLocaleString()} plays across ${d.artists.toLocaleString()} artists. Picks update in a moment.`); loadSettings();
+    } catch (err) { toast(err.message); }
+    e.target.value = "";
+  }
 });
 $("settingsBody").addEventListener("click", async e => {
   const id = e.target.id;
@@ -931,6 +989,7 @@ $("settingsBody").addEventListener("click", async e => {
       toast(`Spotify connected · ${d.artists} artists`); loadSettings(); } catch (err) { toast(err.message); }
     return;
   }
+  if (id === "ytRemove") { try { await api("/api/import/youtube-music", { method: "DELETE" }); loadSettings(); toast("YouTube Music history removed"); } catch (err) { toast(err.message); } return; }
   if (id === "spDisconnect") { try { await api("/api/spotify/disconnect", { method: "POST" }); loadSettings(); toast("Spotify disconnected"); } catch (err) { toast(err.message); } return; }
   if (id === "setSync") { try { await api("/api/sync", { method: "POST" }); wasRunning = userSync = true; poll(); toast("Sync started"); } catch (err) { toast(err.message); } return; }
   if (id === "authChange") { $("authForm").hidden = false; $("authPass").focus(); return; }
@@ -986,7 +1045,7 @@ function showView(v, keepFilters) {
   if (grid) {
     if (!keepFilters) loadF();
     syncControls();
-    $("gridHead").innerHTML = v === "stream" ? `<div class="lib-banner"><h3>You stream these, but don't own them</h3><p>Artists you play on Last.fm, ListenBrainz or Spotify that aren't in Plex${lastStatus.lidarr ? " or Lidarr" : ""}, most-played first.${lastStatus.lidarr ? " Add them to Lidarr from here." : ""}</p></div>` : "";
+    $("gridHead").innerHTML = v === "stream" ? `<div class="lib-banner"><h3>You stream these, but don't own them</h3><p>Artists you play on ListenBrainz, Spotify, YouTube Music or Last.fm that aren't in Plex${lastStatus.lidarr ? " or Lidarr" : ""}, most-played first.${lastStatus.lidarr ? " Add them to Lidarr from here." : ""}</p></div>` : "";
     api("/api/tags?kind=" + gridKind()).then(d => tagFacets = d).catch(() => {});
     load(true);
   }
@@ -1041,7 +1100,7 @@ const APP_SETUP = {
   checklist: () => { const h = lastStatus.history || {}; return [
     { title: "Connect Plex", done: !!lastStatus.configured, card: "plex" },
     { title: "Finish the first sync", done: !!lastStatus.last_sync },
-    { title: "Add listening history (ListenBrainz or Spotify)", done: !!(h.listenbrainz || h.spotify || h.spotify_export || h.lastfm), card: "listenbrainz" },
+    { title: "Add listening history (ListenBrainz, Spotify or YouTube Music)", done: !!(h.listenbrainz || h.spotify || h.spotify_export || h.youtube_music || h.lastfm), card: "listenbrainz" },
     { title: "Connect Lidarr", done: !!lastStatus.lidarr, card: "lidarr" },
   ]; },
 };
@@ -1070,8 +1129,8 @@ function focusPendingCard() {
   setTimeout(() => window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - headerOffset(), behavior: "smooth" }), 50);
 }
 function wzField(k, label, help, ph = "") {
-  const secret = /TOKEN|KEY/.test(k);
-  return `<div class="field"><label>${label}</label><input type="${secret ? "password" : "text"}" data-wz-k="${k}" value="${esc(wzVal(k))}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false">
+  const v = wzVal(k);
+  return `<div class="field"><label>${label}</label>${isSecret(k, v) ? secretInput("data-wz-k", k, v, ph) : `<input type="text" data-wz-k="${k}" value="${esc(v)}" placeholder="${esc(ph)}" autocomplete="off" spellcheck="false">`}
     ${help ? `<div class="help">${help}</div>` : ""}</div>`;
 }
 function renderSetup() {

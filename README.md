@@ -34,7 +34,7 @@ I listen to music in two places: my own library in Plex and Plexamp, and streami
 
 So I built Recordhound to bring both together. It starts from your Plex library and adds your listening from wherever else you play music:
 
-- **All your listening counts.** Your star ratings and plays in Plex and Plexamp, plus your history from ListenBrainz or Spotify (or Last.fm, with Last.fm Pro), shape one picture of your taste. An artist you stream a lot but don't own still counts, and *You Stream* lists those artists so you can add them to your library.
+- **All your listening counts.** Your star ratings and plays in Plex and Plexamp, plus your history from ListenBrainz, Spotify or YouTube Music (or Last.fm, with Last.fm Pro), shape one picture of your taste. An artist you stream a lot but don't own still counts, and *You Stream* lists those artists so you can add them to your library.
 - **Every pick explains itself:** the artists of yours that led to it, and the genres and scenes it shares with your taste.
 - **You can tune it.** In Settings you choose how much artists you own but rarely play count, how strongly recent listening pulls, how many plays elsewhere it takes before an artist counts, and how well known picks should be. You can also stop libraries, genres or artists from shaping your picks.
 
@@ -76,13 +76,13 @@ Your settings and data carry over when you switch, so you can move between them 
 ## What you need
 
 - A Plex server with a music library, and its token (Plex Web → any track → ⋯ → Get Info → View XML; the token is the `X-Plex-Token=` value in the address)
-- Optional: ListenBrainz (free, and the way in for [other streaming services](#listening-on-other-services)), Spotify, Lidarr, and a Last.fm API key (see [Last.fm](#lastfm))
+- Optional: ListenBrainz (free, and the way in for [other streaming services](#listening-on-other-services)), Spotify, YouTube Music, Lidarr, and a Last.fm API key (see [Last.fm](#lastfm))
 
 ## What's in it
 
 - **For You:** a *This week* summary (new picks, new releases, what's coming soon), *Top picks* (reshuffled weekly, never dominated by one of your artists), *New for you this week*, *Because you play…*, *Because you love…*, genre rows, *Deep cuts*, *New from artists you love*, *Albums you're missing*, *In your library, never played* and your saved artists.
 - **All Picks:** every pick with genre include/exclude, how well known an artist is (deep cuts, mid, well known), and sorting.
-- **You Stream:** artists you play a lot on ListenBrainz, Spotify or Last.fm but don't own in Plex (or Lidarr), most-played first. The best list to send to Lidarr.
+- **You Stream:** artists you play a lot on ListenBrainz, Spotify, YouTube Music or Last.fm but don't own in Plex (or Lidarr), most-played first. The best list to send to Lidarr.
 - **Your Library:** albums you own but have never played, ranked by how much you like the artist and how well they fit your taste, each with a reason. One click puts the top 25, 50 or 100 in a Plex playlist for Plexamp.
 - **Rate:** rate the artists you play, one at a time (keys 1–5; hold Shift for a half star). Ratings go to the artist in Plex. You can also rate picks you already know, so they stop being suggested and shape the rest. Every artist page has a **Rate** button too.
 - **Albums you're missing** from artists you already collect, and **new releases** from artists you love, including announced albums from MusicBrainz.
@@ -95,7 +95,7 @@ Your settings and data carry over when you switch, so you can move between them 
 
 ## How it picks
 
-1. **Your taste:** star ratings count most, then how much you play an artist anywhere (Plexamp, ListenBrainz, Spotify, Last.fm), then what you own (adjustable). Artists you've played in the last six months get extra pull, so picks follow what you're into now (adjustable).
+1. **Your taste:** star ratings count most, then how much you play an artist anywhere (Plexamp, ListenBrainz, Spotify, YouTube Music, Last.fm), then what you own (adjustable). Artists you've played in the last six months get extra pull, so picks follow what you're into now (adjustable).
 2. **Candidates:** similar artists for each of your strongest artists. Artists that several of yours point to rank highest.
 3. **Taste match:** a profile of the genres, scenes and eras you return to, from artist tags.
 4. **Popularity:** a small nudge toward artists with enough listeners to have good data.
@@ -113,6 +113,7 @@ Score = 55% "your artists point here" + 35% taste match + 10% popularity. Every 
 | ListenBrainz account | Optional | Your listening history (public profile) |
 | Spotify history file | Optional | Upload the zip from spotify.com/account/privacy. No developer account needed |
 | Spotify account | Optional | Top, followed and saved artists, kept current. Needs a personal Spotify developer app (Spotify requires Premium and allows 5 users per app) |
+| YouTube Music history file | Optional | Upload your watch history from Google Takeout. Only YouTube Music plays count |
 | Last.fm | Optional | See below |
 | Lidarr | Optional | Adding artists |
 
@@ -126,7 +127,9 @@ If you scrobble to ListenBrainz as well, that's a free way to bring in your hist
 
 ### Listening on other services
 
-Recordhound doesn't connect to Apple Music, YouTube Music, Deezer, Tidal or other services directly, but ListenBrainz can collect your plays from them for free:
+**YouTube Music:** upload your history in Settings → YouTube Music. At [takeout.google.com](https://takeout.google.com), deselect everything, tick **YouTube and YouTube Music**, and under *All YouTube data included* keep only **history**. Only YouTube Music plays count, not regular YouTube videos. Upload a newer export now and then, or use ListenBrainz below to keep plays counting as you go.
+
+Recordhound doesn't connect to Apple Music, Deezer, Tidal or other services directly, but ListenBrainz can collect your plays from them (YouTube Music too) for free:
 
 - **In your browser:** the [Web Scrobbler](https://web-scrobbler.com) extension sends what you play in a service's web player to ListenBrainz. It doesn't see what you play in the phone or desktop apps.
 - **On your server:** [multi-scrobbler](https://github.com/FoxxMD/multi-scrobbler) collects plays from several services and players and sends them to ListenBrainz.
