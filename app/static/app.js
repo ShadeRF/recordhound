@@ -673,13 +673,9 @@ async function loadGaps() {
     loadGaps();
   });
 }
-// Groups missing 5 or fewer sit side by side under "Almost complete", each only as wide as its posters;
-// bigger ones get full-width rows under "More to find". Headings only when both are there.
-const GAP_FEW = 5;
+// One group per row, in order, each with its own scrolling row of titles
 function gapSections(groups, count, one) {
-  const few = groups.filter(g => count(g) <= GAP_FEW), many = groups.filter(g => count(g) > GAP_FEW), both = few.length && many.length;
-  return (few.length ? `${both ? `<h3 class="gap-sec">Almost complete</h3>` : ""}<div class="gaps">${few.map(g => one(g, true)).join("")}</div>` : "")
-    + (many.length ? `${both ? `<h3 class="gap-sec">More to find</h3>` : ""}<div class="gaps">${many.map(g => one(g, false)).join("")}</div>` : "");
+  return `<div class="gaps">${groups.map(g => one(g, false)).join("")}</div>`;
 }
 async function loadReleases() {
   listShell("New from artists you love", "", `<div class="grid">${skeleton(8)}</div>`);

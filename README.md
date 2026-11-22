@@ -72,7 +72,7 @@ The container runs as `99:100` by default (`PUID`, `PGID`, `UMASK` change that).
 |---|---|
 | `:latest` | Stable releases. Recommended. |
 | `:nightly` | Built each night from the newest code, when there's anything new. New features first, and occasionally a bug. |
-| `:0.14.0` or `:0.14` | One exact release (or the newest fix in that line). Use it to stay put or to roll back if a release causes trouble. |
+| `:0.14.1` or `:0.14` | One exact release (or the newest fix in that line). Use it to stay put or to roll back if a release causes trouble. |
 | `:edge` | Test builds, published whenever a change is being tried out, sometimes several times a day. Expect rough edges; only use it if you're helping test. |
 
 Your settings and data carry over when you switch, so you can move between them any time.
@@ -89,7 +89,7 @@ Your settings and data carry over when you switch, so you can move between them 
 - **Missing:** everything that isn't yours yet, in four views.
   - **Artists:** artists you play a lot on ListenBrainz, Spotify, YouTube Music or Last.fm but don't own in Plex (or Lidarr), most-played first. The best list to send to Lidarr.
   - **Liked songs:** the songs you've liked on Spotify that aren't in Plex, one row per song, newest like first. Group them by album or artist, sort them, or filter by name. Owning any version of a song counts (a remaster, a live take, the same song on a compilation), and a single you liked is shown with the album it later came out on (found during full syncs). Play a song on Spotify, send its single, EP or album to Lidarr (only that release is monitored), hide songs or albums you don't want, or make a Plex playlist of the liked songs you do own, for Plexamp. Needs the Spotify account connection.
-  - **Albums:** albums you're missing from artists you already collect. Tick **EPs** or **Remixes, live albums, compilations and reissues** to include those too. Artists missing five or fewer albums sit side by side under *Almost complete*; the rest are under *More to find*.
+  - **Albums:** albums you're missing from artists you already collect. Tick **EPs** or **Remixes, live albums, compilations and reissues** to include those too.
   - **New releases** from artists you love, including announced albums from MusicBrainz.
 - **Your Library:** albums you own but have never played, ranked by how much you like the artist and how well they fit your taste, each with a reason. One click puts the top 25, 50 or 100 in a Plex playlist for Plexamp. Soundtracks and compilations you haven't played are included, ranked by the artists on them; untick *Include soundtracks and compilations* in Settings → Plex to leave them out.
 - **Rate:** rate the artists you play, one at a time (tap the stars, or press 1–5; hold Shift for a half star). Ratings go to the artist in Plex. You can also rate picks you already know, so they stop being suggested and shape the rest, or press K if you know them but don't want to rate them. Every artist page has a **Rate** button too.
