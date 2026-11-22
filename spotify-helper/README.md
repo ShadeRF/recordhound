@@ -19,3 +19,5 @@ Nothing. The page runs entirely in your browser:
 - There is no server, no tracking and no analytics.
 
 If you'd rather not use this page, set **Redirect address** in Recordhound's Spotify settings to your own address instead.
+
+This page is part of [Recordhound](https://github.com/ShadeRF/recordhound) (its source lives in `spotify-helper/` there) and shares its AGPL-3.0 license.
