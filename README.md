@@ -30,11 +30,11 @@ Sibling app for movies and TV: [Filmhound](https://github.com/ShadeRF/filmhound)
 
 ## Why Recordhound?
 
-I tried a lot of music recommendation apps, and none of them gave me suggestions that truly matched what was in my library or what I actually listen to. They leaned on what's popular, what a service wants to promote, or what everyone else is playing.
+I listen to music in two places: my own library in Plex and Plexamp, and streaming services. Every recommendation app I tried only saw one side of that, so its picks never matched what I actually listen to. A streaming service doesn't know what's in my collection, and a library tool doesn't know what I've been playing on Spotify.
 
-So I built my own. Recordhound starts from your Plex library and listening history and works outward from there:
+So I built Recordhound to bring both together. It starts from your Plex library and adds your listening from wherever else you play music:
 
-- **Your library and listening come first.** Your star ratings, your plays in Plex and Plexamp, and listening from ListenBrainz, Spotify or Last.fm shape your taste.
+- **All your listening counts.** Your star ratings and plays in Plex and Plexamp, plus your history from ListenBrainz or Spotify (or Last.fm, with Last.fm Pro), shape one picture of your taste. An artist you stream a lot but don't own still counts, and *You Stream* lists those artists so you can add them to your library.
 - **Every pick explains itself:** the artists of yours that led to it, and the genres and scenes it shares with your taste.
 - **You can tune it.** In Settings you choose how much artists you own but rarely play count, how strongly recent listening pulls, how many plays elsewhere it takes before an artist counts, and how well known picks should be. You can also stop libraries, genres or artists from shaping your picks.
 
@@ -76,7 +76,7 @@ Your settings and data carry over when you switch, so you can move between them 
 ## What you need
 
 - A Plex server with a music library, and its token (Plex Web → any track → ⋯ → Get Info → View XML; the token is the `X-Plex-Token=` value in the address)
-- Optional: ListenBrainz, Spotify, Lidarr, and a Last.fm API key (see [Last.fm](#lastfm))
+- Optional: ListenBrainz (free, and the way in for [other streaming services](#listening-on-other-services)), Spotify, Lidarr, and a Last.fm API key (see [Last.fm](#lastfm))
 
 ## What's in it
 
@@ -123,6 +123,15 @@ Your data stays in `/data` (`recordhound.db`, `settings.json`). Recordhound only
 With a Last.fm API key, Recordhound uses Last.fm's similar artists, tags and listener counts instead of the free sources, and can read your scrobbles.
 From December 1, 2026, a Last.fm key only works while the account that owns it has **Last.fm Pro**. If your key stops working, Recordhound switches to the free sources by itself and shows a warning; clear the key in Settings to make that permanent.
 If you scrobble to ListenBrainz as well, that's a free way to bring in your history.
+
+### Listening on other services
+
+Recordhound doesn't connect to Apple Music, YouTube Music, Deezer, Tidal or other services directly, but ListenBrainz can collect your plays from them for free:
+
+- **In your browser:** the [Web Scrobbler](https://web-scrobbler.com) extension sends what you play in a service's web player to ListenBrainz. It doesn't see what you play in the phone or desktop apps.
+- **On your server:** [multi-scrobbler](https://github.com/FoxxMD/multi-scrobbler) collects plays from several services and players and sends them to ListenBrainz.
+
+Then add your ListenBrainz username in Settings. Plays count from the day you set this up.
 
 ### Connecting Spotify
 
