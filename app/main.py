@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -565,6 +565,83 @@ def matching_report(limit: int = 150):
                   "liked_songs_with_a_close_title_in_plex": liked_close[:limit],
                   "counts": {"albums_nearly_complete": len(nearly), "owned_by_name_but_tracks_differ": len(by_name),
                              "liked_songs_with_a_close_title_in_plex": len(liked_close), "plex_song_keys": len(songs)}})
+
+
+from .clients import _VERSION as _VERSION_TITLE   # noqa: E402
+
+
+def _name_mismatches(limit=400):
+    """Songs on albums you own whose title in Plex differs from how Deezer spells it: likely typos in your tags.
+    From stored data only. [{artist, album, elsewhere, plex_key, rk}]"""
+    import difflib
+    songs = db.get_meta("plex_songs") or {}
+    pool = {}
+    for k in songs:
+        if not k.startswith("album:"):
+            a, _, s = k.partition("|")
+            pool.setdefault(a, []).append(s)
+    out = []
+    for key, row in sorted(db.library_map().items(), key=lambda kv: (kv[1].get("name") or "").lower()):
+        owned = {album_key(t) for t in row.get("albums", [])}
+        aks = credit_keys(row["name"])
+        for al in (db.cache_get("dz:" + key) or {}).get("albums", []):
+            if album_key(al.get("title")) not in owned:
+                continue
+            for t in db.cache_get(f"dzalb:{al.get('id')}") or []:
+                title, keys = t.get("title") or "", song_keys(t.get("title"))
+                if _VERSION_TITLE.search(title) or any(f"{a}|{k}" in songs for a in aks for k in keys):
+                    continue   # spelled the same (or a bonus version you may not have)
+                main = max(keys, key=len) if keys else ""
+                for a in aks:
+                    close = difflib.get_close_matches(main, pool.get(a, []), n=1, cutoff=0.8)
+                    if close:
+                        out.append({"artist": row["name"], "album": al.get("title"), "elsewhere": title,
+                                    "plex_key": close[0], "rk": songs.get(f"{a}|{close[0]}")})
+                        break
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+@app.get("/tools/names", response_class=HTMLResponse)
+def name_check():
+    """Not in the menu on purpose: a list of song titles in your Plex tags that look misspelled, to fix in Plex
+    (or in the files). Compares the albums you own with how Deezer spells their tracks."""
+    import html as h
+    rows = _name_mismatches()
+    info = {}
+    if rows and config.PLEX_URL and config.PLEX_TOKEN:   # the real title and file for each, from Plex
+        try:
+            plex = Plex(config.PLEX_URL, config.PLEX_TOKEN)
+            rks = [r["rk"] for r in rows if r.get("rk")]
+            for i in range(0, len(rks), 50):
+                for m in plex._get("/library/metadata/" + ",".join(str(x) for x in rks[i:i + 50])).get("Metadata", []):
+                    part = ((m.get("Media") or [{}])[0].get("Part") or [{}])[0]
+                    info[str(m.get("ratingKey"))] = {"title": m.get("title"), "album": m.get("parentTitle"), "file": part.get("file")}
+        except Exception as e:
+            log.warning("Name check couldn't read Plex: %s", e)
+    machine = db.get_meta("plex_machine")
+    link = lambda rk: (f"https://app.plex.tv/desktop/#!/server/{machine}/details?key=" + urllib.parse.quote(f"/library/metadata/{rk}")) if machine and rk else ""
+    body = "".join(
+        f"<tr><td>{h.escape(r['artist'])}</td><td>{h.escape((info.get(str(r['rk'])) or {}).get('album') or r['album'])}</td>"
+        f"<td class=p>{h.escape((info.get(str(r['rk'])) or {}).get('title') or r['plex_key'])}</td><td class=d>{h.escape(r['elsewhere'])}</td>"
+        f"<td class=f>{h.escape((info.get(str(r['rk'])) or {}).get('file') or '')}</td>"
+        f"<td>{'<a href=' + chr(34) + h.escape(link(r['rk'])) + chr(34) + ' target=_blank rel=noopener>Open in Plex</a>' if link(r['rk']) else ''}</td></tr>"
+        for r in rows)
+    page = f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Name check · Recordhound</title><link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<style>body{{margin:0;padding:24px;background:#0e0d0c;color:#ece6dc;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}}
+h1{{font:600 26px Georgia,serif;margin:0 0 6px}} p{{color:#9a9187;max-width:900px}} table{{border-collapse:collapse;width:100%;margin-top:16px}}
+th,td{{text-align:left;padding:7px 10px;border-bottom:1px solid #2a2622;vertical-align:top}} th{{color:#9a9187;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.06em}}
+td.p{{color:#f0a693}} td.d{{color:#a7d7a0}} td.f{{color:#9a9187;font-size:12px;word-break:break-all}} a{{color:#ef6450}}</style></head><body>
+<h1>Name check</h1>
+<p>Songs on albums you own whose title in Plex looks different from how Deezer spells it, so Recordhound may not match them.
+Fix the ones that are typos in Plex (or in the files' tags), then run a full sync. Some differences are just different spellings
+of a real title; leave those as they are. {len(rows)} found{' (showing the first 400)' if len(rows) >= 400 else ''}.</p>
+<table><tr><th>Artist</th><th>Album</th><th>In Plex</th><th>Deezer spells it</th><th>File</th><th></th></tr>{body}</table>
+{'' if rows else '<p>Nothing found. Either your titles match, or the albums you own have not been looked up yet: open a few artists, or run a full sync.</p>'}
+</body></html>"""
+    return HTMLResponse(page)
 
 
 @app.get("/api/gaps")

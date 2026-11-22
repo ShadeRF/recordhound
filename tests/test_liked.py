@@ -627,7 +627,7 @@ def test_matching_report_points_at_near_misses(client):
     db.set_meta("plex_songs", {f"{k}|intro": "1", f"{k}|breakthru": "2", f"{k}|outro": "3", f"{k}|lovesong": "4"})
     db.cache_put("dz:" + k, {"id": 1, "albums": [{"id": 901, "title": "Report Album", "type": "album"}]})
     db.cache_put("dzalb:901", [{"title": "Intro"}, {"title": "Break Through"}, {"title": "Outro"}, {"title": "Love Song"}])
-    db.set_meta("spotify_liked", [{"title": "Love Songs", "artists": [lib["name"]], "album": "X"}])
+    db.set_meta("spotify_liked", [{"title": "Love Is A Song", "artists": [lib["name"]], "album": "X"}])   # close, but not a typo
     db.commit()
     try:
         d = c.get("/api/matching-report").json()
@@ -649,3 +649,55 @@ def test_numbered_titles_match_however_they_are_written():
     assert same_song("Vol. 3", "Volume III")
     assert not same_song("Another Brick in the Wall, Pt. 1", "Another Brick in the Wall, Pt. 2")
     assert not same_song("I Will", "Will")
+
+
+def test_matching_rules_from_a_real_library():
+    from app.clients import owned_track, song_keys, tracks_owned
+    keys = lambda a, *titles: {f"{a}|{k}": "1" for t in titles for k in song_keys(t)}
+    songs = {**keys("bilmuri", "Neon Medusa (Live)", "Lifeisgood"), **keys("michaeljackson", "Beat It (Demo)", "Beat It"),
+             **keys("countingcrows", "Big Yellow Taxi"), **keys("ataris", "Bite My Tongue", "If You Really Wanna Hear About It"),
+             **keys("bearmccreary", "Dreilide Thrace Sonata No. 1"), **keys("gunship", "Tech Noir II"),
+             **keys("johnwilliams", "Star Wars & the Revenge of the Sith"), **keys("bingcrosby", "I'm Through With Love"),
+             **keys("tearsforfears", "Everybody Wants to Rule the World"), **keys("brothertiger", "Wallow"),
+             **keys("loversinjapan", "x"), **keys("coldplay", "Lovers in Japan")}
+    have = lambda artist, *titles, album="Album": tracks_owned([{"title": t} for t in titles], artist, album, songs)
+    assert have("Bilmuri", "Neon Medusa (Live)") == [True]                    # the live version you own
+    assert have("Bilmuri", "Lifeisgood (Live)") == [False]                    # only the studio one in Plex
+    assert have("Michael Jackson", "Beat It (Demo)") == [True]
+    assert have("Counting Crows", "Big Yello Taxi") == [True]                 # a typo on Deezer's side
+    assert have("The Ataris", "Bite My Tounge", "If You Really Want To Hear About It") == [True, True]
+    assert have("Bear McCreary", "Dreilide Thrace Sonata #1") == [True]
+    assert have("GUNSHIP", "Tech Noir 2") == [True]
+    assert have("John Williams", "Star Wars and the Revenge of the Sith") == [True]
+    assert have("Bing Crosby", "I'm Thru With Love") == [True]
+    assert have("Tears for Fears", "Everybody Wants To Run The World") == [False]   # a different song
+    assert have("Brothertiger", "Shallow") == [False]
+    assert have("Coldplay", "Lovers in Japan (Osaka Sun Mix)") == [False]     # a different mix
+    assert owned_track({"title": "Big Yello Taxi", "artists": ["Counting Crows"]}, songs)
+    assert not owned_track({"title": "Shallow", "artists": ["Brothertiger"]}, songs)
+    album = {"album:exitdemo|bedroom": "1", **{f"album:exitdemo|{k}": "1" for k in song_keys("Flight")}}
+    assert tracks_owned([{"title": "Bedroom"}, {"title": "Flight"}], "Daphne Loves Derby", "Exit (Demo)", album) == [True, True]
+
+
+def test_name_check_lists_titles_that_look_misspelled_in_plex(client, monkeypatch):
+    c, m = client
+    from app.clients import song_keys
+    keep = db.get_meta("plex_songs")
+    lib = next(iter(db.library_map().values()), None)
+    if lib is None:
+        return
+    k, owned = lib["key"], (lib.get("albums") or ["Owned Album"])[0]
+    db.set_meta("plex_songs", {**{f"{k}|{x}": "7" for t in ("Intro", "Bite My Tounge") for x in song_keys(t)}})
+    db.cache_put("dz:" + k, {"id": 1, "albums": [{"id": 902, "title": owned, "type": "album"}]})
+    db.cache_put("dzalb:902", [{"title": "Intro"}, {"title": "Bite My Tongue"}, {"title": "Totally Different Song"}])
+    db.commit()
+    monkeypatch.setattr(config, "PLEX_URL", "")   # don't ask Plex in a test
+    try:
+        rows = m._name_mismatches()
+        assert [(r["plex_key"], r["elsewhere"]) for r in rows if r["album"] == owned] == [("bitemytounge", "Bite My Tongue")]
+        page = c.get("/tools/names").text
+        assert "Name check" in page and "Bite My Tongue" in page and "bitemytounge" in page
+    finally:
+        db.set_meta("plex_songs", keep)
+        db.conn().execute("DELETE FROM cache WHERE k IN (?, 'dzalb:902')", ("dz:" + k,))
+        db.commit()

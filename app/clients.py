@@ -101,13 +101,22 @@ _ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii":
 _NUMBERED = re.compile(r"\b(part|pt|vol|volume|chapter|ch|no|number|op)\.?\s*(\d+|[ivx]+)\b", re.I)
 
 
+_SPOKEN = [(re.compile(r"\bthru\b", re.I), "through"), (re.compile(r"\bwanna\b", re.I), "want to"),
+           (re.compile(r"\bgonna\b", re.I), "going to"), (re.compile(r"\bgotta\b", re.I), "got to"),
+           (re.compile(r"#\s*(\d+)"), r"no \1")]
+_TRAILING_ROMAN = re.compile(r"\s(ii|iii|iv|vi|vii|viii|ix)\s*$", re.I)
+
+
 def _numbered(title):
     """Numbering written one way: "Pt. II", "Part 2" and "part 2" all become "part 2"."""
     def one(m):
         word, n = m.group(1).lower(), m.group(2).lower()
         word = {"pt": "part", "vol": "volume", "ch": "chapter", "number": "no"}.get(word, word)
         return f"{word} {_ROMAN.get(n, n)}"
-    return _NUMBERED.sub(one, title or "")
+    title = _NUMBERED.sub(one, title or "")
+    for rx, to in _SPOKEN:
+        title = rx.sub(to, title)
+    return _TRAILING_ROMAN.sub(lambda m: f" {_ROMAN[m.group(1).lower()]}", title)   # "Tech Noir II" is "Tech Noir 2"
 
 
 @functools.lru_cache(maxsize=200_000)
@@ -119,7 +128,50 @@ def song_keys(title):
     whole = re.sub(r"\s+-\s+.*$", "", s)
     whole = re.sub(r"[\(\[]\s*(?:feat|ft|featuring|with)\.?\s[^\)\]]*[\)\]]", "", whole)   # "(feat. X)" is never part of the name
     whole = re.sub(r"\s(?:feat|ft|featuring)\.?\s.*$", "", whole).replace("&", " and ")
-    return frozenset(k for k in (song_key(title), re.sub(r"[^a-z0-9]+", "", whole)) if k)
+    no_and = re.sub(r"\band\b", " ", whole)   # "Star Wars and the Revenge…" / "Star Wars & the Revenge…" / "…/ The Revenge…"
+    return frozenset(k for k in (song_key(title), re.sub(r"[^a-z0-9]+", "", whole), re.sub(r"[^a-z0-9]+", "", no_and)) if k)
+
+
+def _exact_key(title):
+    """The title with its version label kept: "Neon Medusa (Live)" is "neonmedusalive", not "neonmedusa"."""
+    s = unicodedata.normalize("NFKD", _numbered(title).translate(_PLAIN)).encode("ascii", "ignore").decode().lower()
+    s = re.sub(r"[\(\[]\s*(?:feat|ft|featuring|with)\.?\s[^\)\]]*[\)\]]", "", s).replace("&", " and ")
+    return re.sub(r"[^a-z0-9]+", "", s)
+
+
+_BY_ARTIST = {"id": None, "n": 0, "by": {}, "seen": {}}
+
+
+def _typo(a, b, difflib):
+    if a == b or abs(len(a) - len(b)) > 2 or a[0] != b[0]:
+        return False
+    ops = [o for o in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes() if o[0] != "equal"]
+    return all(o[0] in ("insert", "delete") for o in ops) and sum(max(o[2] - o[1], o[4] - o[3]) for o in ops) <= 2
+
+
+def _near_song(artist_keys, keys, songs):
+    """A song of yours by the same artist whose title differs only by a letter or two added, dropped or moved:
+    "Big Yello Taxi" / "Big Yellow Taxi", "Bite My Tounge" / "Tongue", "Reelin'" / "Reeling". Letters replaced by
+    others don't count, since that's how different words differ: "Run the World" isn't "Rule the World"."""
+    import difflib
+    idx = _BY_ARTIST
+    if idx["id"] != id(songs) or idx["n"] != len(songs):
+        by = {}
+        for k in songs:
+            if not k.startswith("album:"):
+                a, _, s = k.partition("|")
+                by.setdefault(a, []).append(s)
+        idx.update(id=id(songs), n=len(songs), by=by, seen={})
+    for sk in keys:
+        if len(sk) < 8:
+            continue
+        for a in artist_keys:
+            memo = (a, sk)
+            if memo not in idx["seen"]:
+                idx["seen"][memo] = any(_typo(sk, s, difflib) for s in idx["by"].get(a, ()))
+            if idx["seen"][memo]:
+                return True
+    return False
 
 
 def same_song(a, b):
@@ -163,15 +215,19 @@ def tracks_owned(tracks, artist, album_title, songs):
     """Which of an album's tracks you own in Plex."""
     if not songs:
         return [False] * len(tracks)
-    special = bool(_VERSION.search(album_title or ""))
+    special, on_album = bool(_VERSION.search(album_title or "")), album_key(album_title)
     out = []
     for t in tracks:
-        if special or _VERSION.search(t.get("title") or ""):
+        title, keys = t.get("title") or "", song_keys(t.get("title"))
+        aks = credit_keys(artist) | credit_keys(t.get("artist") or "")
+        if any(f"album:{on_album}|{sk}" in songs for sk in keys):   # on this very album in your Plex
+            out.append(True)
+        elif special and not _VERSION.search(title):   # a live, demo or instrumental album: only that album counts
             out.append(False)
-            continue
-        out.append(any(f"{ak}|{sk}" in songs for sk in song_keys(t.get("title"))
-                       for ak in credit_keys(artist) | credit_keys(t.get("artist") or ""))
-                   or any(f"album:{album_key(album_title)}|{sk}" in songs for sk in song_keys(t.get("title"))))
+        elif _VERSION.search(title):   # a Live, Demo, Remix or Instrumental version: only that version counts
+            out.append(any(f"{a}|{_exact_key(title)}" in songs for a in aks))
+        else:
+            out.append(any(f"{a}|{sk}" in songs for sk in keys for a in aks) or _near_song(aks, keys, songs))
     return out
 
 
@@ -204,7 +260,8 @@ def owned_track(t, songs):
             rk = songs.get(f"album:{album_key(t['album'])}|{sk}")
             if rk:
                 return rk
-    return None
+    aks = set().union(*(credit_keys(c) for c in (t.get("artists") or []) + [t.get("album_artist") or ""]))
+    return "near" if _near_song(aks, song_keys(t.get("title")), songs) else None   # the same song, spelled a little differently
 
 
 # ======================================================================= Plex
