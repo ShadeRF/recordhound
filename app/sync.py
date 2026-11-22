@@ -41,6 +41,25 @@ def cache_days(key):
     return days + (zlib.crc32(key.encode()) % 1000) / 1000 * days / 3 if days > 0 else days
 
 
+def _days(d):
+    try:
+        return date.fromisoformat((d or "")[:10]).toordinal()
+    except ValueError:
+        return None
+
+
+def _same_album(ak, when, seen):
+    """A title that's only a longer form of one already listed, out around the same time: "Hidden in Pieces: Live"
+    and "Hidden in Pieces: Live at the Royal Albert Hall". Short titles never match ("Blue" vs "Blue Lines"), and
+    releases months apart stay separate ("Led Zeppelin" and "Led Zeppelin II")."""
+    for s, other in seen.items():
+        if s != ak and min(len(s), len(ak)) >= 8 and (ak.startswith(s) or s.startswith(ak)):
+            a, b = _days(when), _days(other)
+            if a is None or b is None or abs(a - b) <= 120:
+                return True
+    return False
+
+
 class Syncer:
     def __init__(self, plex_factory=None, lastfm_factory=None, deezer_factory=None, sources=None, artist_factory=None):
         self.plex_factory = plex_factory or (lambda: Plex(config.PLEX_URL, config.PLEX_TOKEN, config.PLEX_LIBRARIES))
@@ -306,19 +325,19 @@ class Syncer:
             if a.get("missing") and not mbrg.get(k):
                 continue
             owned = {album_key(t) for t in (lib.get(k) or {}).get("albums", [])}
-            seen = set()
+            seen = {}   # album key -> release date
             albums = []
             for al in a.get("albums", []):
                 ak = album_key(al["title"])
-                if ak in seen or al.get("type") not in ("album", "ep"):
+                if ak in seen or al.get("type") not in ("album", "ep") or _same_album(ak, al.get("date"), seen):
                     continue
-                seen.add(ak)
+                seen[ak] = al.get("date")
                 albums.append({**al, "owned": ak in owned, "artist": seeds[k]["name"], "artist_key": k})
             for g in mbrg.get(k, []):   # new releases Deezer doesn't have yet, including announced ones (not used for gaps)
                 ak = album_key(g["title"])
-                if ak in seen or ak in owned or len(g["date"]) < 7 or g["date"] < recent:
+                if ak in seen or ak in owned or len(g["date"]) < 7 or g["date"] < recent or _same_album(ak, g["date"], seen):
                     continue
-                seen.add(ak)
+                seen[ak] = g["date"]
                 albums.append({"id": g["id"], "title": g["title"], "date": g["date"] if len(g["date"]) == 10 else g["date"] + "-01",
                                "type": g["type"], "cover": f"https://coverartarchive.org/release-group/{g['id']}/front-250",
                                "fans": 0, "owned": False, "artist": seeds[k]["name"], "artist_key": k, "source": "musicbrainz",
@@ -333,9 +352,38 @@ class Syncer:
                     gaps.append({"key": k, "name": seeds[k]["name"], "picture": a.get("thumb"), "owned": n_own,
                                  "total": n_own + len(missing), "albums": missing[:12]})
         releases.sort(key=lambda x: x.get("date") or "", reverse=True)
+        if self.sources is None:
+            self._cover_check([x for x in releases if x.get("mb_only")])
         gaps.sort(key=lambda g: -seeds[g["key"]]["w"])
         db.set_meta("gaps", {"at": time.time(), "groups": gaps})
         db.set_meta("releases", {"at": time.time(), "items": releases})
+
+
+def _cover_check(self, items):
+    """Announced albums often have no artwork yet. Ask the Cover Art Archive once a week, so they show a clean title
+    card instead of a broken image, and For You can lead with the albums that do have covers."""
+    ids = [x["id"] for x in items]
+    known = {k[4:]: v for k, v in db.cache_get_many(["caa:" + i for i in ids], 7).items()}
+
+    def has_art(i):   # network only: database access stays on this thread
+        try:
+            r = requests.head(f"https://coverartarchive.org/release-group/{i}/front-250", timeout=10, allow_redirects=True,
+                              headers={"User-Agent": "Recordhound"})
+            return i, (r.status_code == 200 if r.status_code in (200, 404) else None)
+        except requests.RequestException:
+            return i, None
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        for i, art in ex.map(has_art, [i for i in ids if i not in known]):
+            if art is not None:   # unsure (archive down): leave the cover and ask again next time
+                known[i] = art
+                db.cache_put("caa:" + i, art)
+                db.commit()
+    for x in items:
+        if known.get(x["id"]) is False:
+            x["cover"] = None
+
+
+Syncer._cover_check = _cover_check
 
 
 def _mb_releases(self, keys):

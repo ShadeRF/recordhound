@@ -301,6 +301,18 @@ def test_rate_from_the_artist_panel(page, site):
         db.clear_feedback(key)
 
 
+def test_album_without_a_cover_keeps_its_title_clear_of_the_date(page):
+    go(page, "releases")
+    card = page.locator(".card.al", has=page.locator(".match")).filter(has=page.locator(".poster > span")).first
+    assert card.count() == 1, "the test library has an announced album with no cover"
+    # a long title fills the card, which is when it used to run under the badge
+    card.locator(".poster > span").evaluate("e => e.textContent = 'An Orchestral Evening with the Choir (Live at the Concert Hall, Recorded Over Two Nights in Reykjavik) '.repeat(3)")
+    badge, title = card.locator(".match").bounding_box(), card.locator(".poster > span").bounding_box()
+    pad = card.locator(".poster > span").evaluate("e => parseFloat(getComputedStyle(e).paddingTop)")
+    text_top = title["y"] + pad   # where the words start inside the title box
+    assert text_top >= badge["y"] + badge["height"], (badge, title)
+
+
 def test_library_filter_keeps_focus_while_typing(page):
     go(page, "library")
     page.locator("#libN").select_option("100")
@@ -439,6 +451,8 @@ def test_phone_layout(browser, site):
             assert p.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"{where} scrolls sideways on a phone"
             box = p.locator("#gsearch").bounding_box()
             assert box and box["width"] > 60 and box["x"] + box["width"] <= 390, "search should fit in the phone header"
+            gear = p.locator("#gear").bounding_box()
+            assert abs(gear["y"] - box["y"]) < 12 and gear["x"] + gear["width"] <= 390, "the header should stay on one line on a phone"
         assert not errors, errors
     finally:
         ctx.close()

@@ -226,6 +226,8 @@ img.svc { width: 16px; height: 16px; border-radius: 3px; }
 /* cards */
 .poster { position: relative; }
 .poster span { padding: 10px; }
+/* the title shown when there's no picture: clear of the date badge in the corner, and never longer than four lines */
+.poster > span:not([class]) { padding: 34px 12px 12px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; text-align: center; }
 .plogos { position: absolute; left: 6px; bottom: 6px; display: flex; gap: 4px; }
 .plogos img { width: 24px; height: 24px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.6); }
 .match.own { color: var(--good); display: inline-flex; gap: 3px; align-items: center; }
@@ -621,3 +623,5 @@ details.fold > summary:focus-visible, details.adv > summary:focus-visible { outl
 .gs-check { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--line); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; flex-shrink: 0; }
 .gs-item.done .gs-check { background: var(--good); border-color: var(--good); color: #0e0d0c; }
 .wz-progress .bar-track { width: 100%; margin: 0; }
+/* phones: the search box takes whatever room is left, so the header stays on one line */
+@media (max-width: 560px) { .bar { gap: 6px; } .bar .gsearch { flex: 1 1 0; width: auto; min-width: 0; } .media-seg { margin-left: 0; } .media-seg button { padding: 5px 9px; } }

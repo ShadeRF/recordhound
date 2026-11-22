@@ -9,6 +9,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp())
 
 import pytest  # noqa: E402
+from datetime import date, timedelta
+from app import sync as sync_mod  # noqa: E402
 import requests  # noqa: E402
 
 from app import clients, config, db  # noqa: E402
@@ -231,3 +233,67 @@ def test_lookups_never_leave_a_write_open(monkeypatch):
     s.run(full=True)
     assert s.state["error"] is None, s.state
     assert len(open_writes) > 20 and not any(open_writes)
+
+
+def test_near_identical_album_titles_count_once():
+    from app.sync import _same_album
+    seen = {album_key("Hidden in Pieces: Live"): "2026-10-02"}
+    assert _same_album(album_key("Hidden in Pieces: Live at the Royal Albert Hall"), "2026-10-02", seen)
+    led = {album_key("Led Zeppelin"): "1969-01-12"}
+    assert not _same_album(album_key("Led Zeppelin II"), "1969-10-22", led), "months apart: two different albums"
+    assert not _same_album(album_key("Blue Lines"), "1991-04-08", {album_key("Blue"): "1991-04-08"}), "short titles never match"
+    assert not _same_album(album_key("Hidden in Pieces: Live"), "2026-10-02", seen), "the same key is handled elsewhere"
+    # in a sync: one album, not two
+    db.init()
+
+    class TwoTitles(tp.FakeDeezer):
+        def albums(self, _id):
+            soon = (date.today() - timedelta(days=3)).isoformat()
+            return super().albums(_id) + [{"id": 50, "title": "Hidden in Pieces: Live", "type": "album", "date": soon, "fans": 1},
+                                          {"id": 51, "title": "Hidden in Pieces: Live at the Royal Albert Hall", "type": "album", "date": soon, "fans": 1}]
+    s = tp.Syncer(lambda: tp.FakePlex(), lambda: tp.FakeLastFM(), TwoTitles, artist_factory=lambda: (tp.FakeLastFM(), "lf:", None), sources={})
+    db.conn().execute("DELETE FROM cache WHERE k LIKE 'dz:%'")
+    db.commit()
+    s.run(full=True)
+    rel = [a for a in db.get_meta("releases")["items"] if a["title"].startswith("Hidden in Pieces")]
+    by_artist = {}
+    for a in rel:
+        by_artist.setdefault(a["artist_key"], []).append(a["title"])
+    assert by_artist and all(len(v) == 1 for v in by_artist.values()), by_artist
+
+
+def test_announced_albums_without_art_and_for_you_leads_with_covers(monkeypatch):
+    from fastapi.testclient import TestClient
+    import app.main as m
+    db.init()
+    asked = []
+
+    class Head:
+        def __init__(self, code):
+            self.status_code = code
+
+    def head(url, **kw):
+        rid = url.split("/release-group/")[1].split("/")[0]
+        asked.append(rid)
+        if rid == "down":
+            raise requests.ConnectionError("archive down")
+        return Head(200 if rid == "has-art" else 404)
+    monkeypatch.setattr(sync_mod.requests, "head", head)
+    for rid in ("has-art", "no-art", "down"):
+        db.conn().execute("DELETE FROM cache WHERE k = ?", ("caa:" + rid,))
+    db.commit()
+    items = [{"id": r, "mb_only": True, "cover": f"https://coverartarchive.org/release-group/{r}/front-250"} for r in ("has-art", "no-art", "down")]
+    s = tp.Syncer(lambda: tp.FakePlex(), lambda: tp.FakeLastFM(), tp.FakeDeezer)
+    s._cover_check(items)
+    assert [bool(x["cover"]) for x in items] == [True, False, True], "unsure (archive down) keeps the cover"
+    asked.clear()
+    s._cover_check([dict(x, cover="c") for x in items])
+    assert asked == ["down"], "known answers are remembered for a week; an unsure one is asked again"
+    # For You puts albums with covers first, each group in date order
+    soon = (date.today() + timedelta(days=5)).isoformat()
+    db.set_meta("releases", {"at": time.time(), "items": [
+        {"title": "No Art", "artist": "A", "artist_key": "a", "date": soon, "cover": None},
+        {"title": "Art 1", "artist": "B", "artist_key": "b", "date": soon, "cover": "x"},
+        {"title": "Art 2", "artist": "C", "artist_key": "c", "date": "2026-01-01", "cover": "y"}]})
+    row = next(r for r in TestClient(m.app).get("/api/home").json()["rows"] if r["id"] == "releases")
+    assert [a["title"] for a in row["items"]] == ["Art 1", "Art 2", "No Art"]

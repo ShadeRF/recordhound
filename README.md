@@ -13,6 +13,31 @@ Nothing is ever downloaded automatically.
 
 Sibling app for movies and TV: [Filmhound](https://github.com/ShadeRF/filmhound).
 
+<p align="center"><img src="https://raw.githubusercontent.com/ShadeRF/unraid-templates/main/screenshots/recordhound-for-you.jpg" alt="For You: top picks, each with the artists that led to it, then new releases from artists you love"></p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="https://raw.githubusercontent.com/ShadeRF/unraid-templates/main/screenshots/recordhound-details.jpg" alt="An artist page: previews, tags, and why it was picked"><br><sub>Every artist: previews, why it was picked, and one click to add it to Lidarr.</sub></td>
+    <td width="50%"><img src="https://raw.githubusercontent.com/ShadeRF/unraid-templates/main/screenshots/recordhound-library.jpg" alt="Your Library: albums you own but have never played, best for you first"><br><sub>Your Library: albums you own but never played, ready to send to a Plex playlist.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="https://raw.githubusercontent.com/ShadeRF/unraid-templates/main/screenshots/recordhound-rate.jpg" alt="The Rate page: rate the artists you play, one at a time"><br><sub>Rate the artists you play; ratings go to Plex and Plexamp too.</sub></td>
+    <td width="50%" align="center"><img src="https://raw.githubusercontent.com/ShadeRF/unraid-templates/main/screenshots/recordhound-phone.jpg" width="45%" alt="For You on a phone"><br><sub>Works on your phone.</sub></td>
+  </tr>
+</table>
+
+<sub>Screenshots show a demo library.</sub>
+
+## Why Recordhound?
+
+I tried a lot of music recommendation apps, and none of them gave me suggestions that truly matched what was in my library or what I actually listen to. They leaned on what's popular, what a service wants to promote, or what everyone else is playing.
+
+So I built my own. Recordhound starts from your Plex library and listening history and works outward from there:
+
+- **Your library and listening come first.** Your star ratings, your plays in Plex and Plexamp, and listening from ListenBrainz, Spotify or Last.fm shape your taste.
+- **Every pick explains itself:** the artists of yours that led to it, and the genres and scenes it shares with your taste.
+- **You can tune it.** In Settings you choose how much artists you own but rarely play count, how strongly recent listening pulls, how many plays elsewhere it takes before an artist counts, and how well known picks should be. You can also stop libraries, genres or artists from shaping your picks.
+
 ## Install
 
 **Unraid:** search for **Recordhound** in Community Apps. Setup is covered in [the Unraid guide](https://github.com/ShadeRF/unraid-templates/blob/main/docs/recordhound.md).
@@ -124,6 +149,10 @@ Turn on sign-in in Settings before reaching it from outside your home.
 - Too many obscure picks? Raise *Minimum Deezer fans* (or *Minimum Last.fm listeners* with a Last.fm key). Too mainstream? Lower it and look at *Deep cuts*.
 - Every setting can also come from an environment variable with the same name (`PLEX_URL`, `LIDARR_URL`…). Anything saved on the Settings page wins.
 - Delete `recordhound.db` and `settings.json` in your data folder to start fresh.
+
+## About the name
+
+Filmhound and Recordhound are named for Daisy, my beagle and the hound of my life. She's gone now, but she always had a nose for good things, and I like to think these apps carry a little of that.
 
 ## Source and license
 

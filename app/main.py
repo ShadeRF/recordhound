@@ -259,6 +259,7 @@ def home():
         rows.append({"id": "saved", "title": "Saved for later", "items": saved[:24], "see_all": {"view": "saved"}})
     rel = [a for a in (db.get_meta("releases") or {}).get("items", [])]
     if rel:
+        rel = sorted(rel, key=lambda a: not a.get("cover"))   # albums with artwork first; each group keeps its date order
         rows.append({"id": "releases", "type": "albums", "title": "New from artists you love", "items": rel[:24], "see_all": {"view": "releases"}})
     # Because you play X: your most-played artists that point at several picks
     seeds = db.get_meta("seeds", {})
