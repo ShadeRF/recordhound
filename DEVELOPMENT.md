@@ -28,15 +28,15 @@ Without Playwright or Chrome they skip themselves. The build sets `REQUIRE_BROWS
 ## Releasing
 
 1. Bump `__version__` in `app/__init__.py` and commit.
-2. `git push`, then `git tag v0.9.0` and `git push origin v0.9.0`.
+2. `git push`, then `git tag vX.Y.Z` and `git push origin vX.Y.Z` (the new version).
    Push only the new tag. `git push --tags` also pushes any older tag GitHub doesn't have yet, which starts a release build for that version, and whichever build finishes last becomes `latest`.
-3. The workflow publishes `ghcr.io/shaderf/recordhound:0.9.0`, `:0.9` and `:latest`; Unraid shows "update available".
+3. The workflow publishes `ghcr.io/shaderf/recordhound:X.Y.Z`, `:X.Y` and `:latest`; Unraid shows "update available".
 
 Pushing to `main` alone publishes nothing.
 Only the newest version tag moves `latest`: building an older tag publishes that version's own tags and leaves `latest` alone. A tag that isn't `vX.Y.Z` publishes nothing.
 Every build runs the tests first (then the browser tests in Chrome) and publishes nothing if they fail. Pull requests (including Dependabot's) run them too.
 
-**Nightly builds:** every night at about 3:41 AM Eastern, if `main` has commits the last nightly didn't, the workflow publishes `ghcr.io/shaderf/recordhound:nightly`. Nights with nothing new are skipped in a few seconds.
+**Nightly builds:** every night at 08:41 UTC (3:41 AM Eastern in winter, 4:41 in summer), if `main` has commits the last nightly didn't, the workflow publishes `ghcr.io/shaderf/recordhound:nightly`. Nights with nothing new are skipped in a few seconds.
 Nightly images show their build in the version, e.g. `1.2.3+nightly.20261121.ab12cd3`. Users can pick Latest or Nightly when installing from Community Apps.
 
 **Edge builds (for testing):** run the workflow by hand from the Actions tab or with `gh workflow run docker.yml`. It publishes `ghcr.io/shaderf/recordhound:edge` from `main` right away (version like `1.2.3+edge.20261121.ab12cd3`). Use `:edge` on your own server for quick test cycles, so `:nightly` stays a true once-a-night build. Neither touches `:latest`.
@@ -48,7 +48,7 @@ When a release changes setup or requirements, update those after the release is 
 
 ## Dependabot
 
-Weekly PRs for workflow actions, pip packages and the Docker base image. `actions/checkout` is held at v5.0.0: newer versions couldn't fetch the repository with the workflow token while it was private. That no longer applies, so the hold can be lifted.
+Weekly PRs for workflow actions, pip packages and the Docker base image. `actions/checkout` was held at v5.0.0 while the repository was private (newer versions couldn't fetch it with the workflow token). The hold is lifted, so Dependabot proposes newer versions like any other update; its pull request runs the tests before you merge.
 Merging a Dependabot PR doesn't publish anything; it ships with the next tag or nightly.
 
 ## Artist data sources
