@@ -92,6 +92,7 @@ def song_key(title):
     s = unicodedata.normalize("NFKD", (title or "").translate(_PLAIN)).encode("ascii", "ignore").decode().lower()
     cut = re.sub(r"\s+-\s+.*$", "", s)                       # Spotify's " - Remastered 2011", " - Radio Edit"
     cut = re.sub(r"[\(\[][^\)\]]*[\)\]]", "", cut)            # "(Live)", "[feat. X]"
+    cut = re.sub(r"\s*[\(\[][^\)\]]*$", "", cut)                # a bracket never closed
     cut = re.sub(r"\s(?:feat|ft|featuring)\.?\s.*$", "", cut)
     cut = cut.replace("&", " and ")
     return re.sub(r"[^a-z0-9]+", "", cut) or re.sub(r"[^a-z0-9]+", "", s) or (title or "").strip().lower()
@@ -107,7 +108,8 @@ _SPOKEN = [(re.compile(r"\bthru\b", re.I), "through"), (re.compile(r"\bwanna\b",
 _TRAILING_ROMAN = re.compile(r"\s(ii|iii|iv|vi|vii|viii|ix)\s*$", re.I)
 # Labels that say nothing about the recording: "(Album Version)", "(2001 Remaster)", "[Bonus Track]", "(Original)"
 _PLAIN_LABEL = re.compile(r"[\(\[]\s*(?:(?:album|single|radio|lp|mono|stereo|original|78 rpm)\s+(?:version|edit|mix)|single version\s*/\s*mono"
-                          r"|(?:\d{4}\s+)?remaster(?:ed)?(?:\s+(?:version|\d{4}))?|bonus(?:\s+track)?|original|mono|stereo|radio edit|edit)\s*[\)\]]", re.I)
+                          r"|(?:\d{4}\s+)?remaster(?:ed)?(?:\s+(?:version|\d{4}))?|bonus(?:\s+track)?|original|mono|stereo|radio edit|edit)\s*[\)\]]"
+                          r"|[\(\[]\s*from\s+[\"“][^\)\]]*(?:[\)\]]|$)", re.I)
 
 
 def _numbered(title):
@@ -128,11 +130,14 @@ def song_keys(title):
     ("About Nothing (For the Love of Destiny)" is "About Nothing for the Love of Destiny"), so both readings count."""
     title = _PLAIN_LABEL.sub("", _numbered(title))   # "Pt. II" and "Part 2" are the same; "(Album Version)" says nothing
     s = unicodedata.normalize("NFKD", (title or "").translate(_PLAIN)).encode("ascii", "ignore").decode().lower()
+    dashed = re.sub(r"[\(\[]\s*(?:feat|ft|featuring|with)\.?\s[^\)\]]*[\)\]]", "", s).replace("&", " and ")
     whole = re.sub(r"\s+-\s+.*$", "", s)
     whole = re.sub(r"[\(\[]\s*(?:feat|ft|featuring|with)\.?\s[^\)\]]*[\)\]]", "", whole)   # "(feat. X)" is never part of the name
     whole = re.sub(r"\s(?:feat|ft|featuring)\.?\s.*$", "", whole).replace("&", " and ")
     no_and = re.sub(r"\band\b", " ", whole)   # "Star Wars and the Revenge…" / "Star Wars & the Revenge…" / "…/ The Revenge…"
     keys = [song_key(title), re.sub(r"[^a-z0-9]+", "", whole), re.sub(r"[^a-z0-9]+", "", no_and)]
+    if " - " in dashed and not re.search(r"\s-\s.*\b(remaster|version|edit|mix|live|mono|stereo|demo)", dashed):
+        keys.append(re.sub(r"[^a-z0-9]+", "", re.sub(r"[\(\[][^\)\]]*[\)\]]", "", dashed)))
     head, colon, tail = whole.partition(": ")   # "Act V, Scene V: And So It Ends Like It Begins"
     if colon and len(re.findall(r"[a-z0-9]+", tail)) >= 4 and not re.search(r"[\(\[]", head):
         keys.append(re.sub(r"[^a-z0-9]+", "", tail))

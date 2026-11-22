@@ -536,6 +536,12 @@ def matching_report(limit: int = 150):
         pool = set().union(*(by_artist.get(a, set()) for a in artist_keys)) if artist_keys else set()
         return difflib.get_close_matches(sk, list(pool), n=2, cutoff=0.75)
 
+    def closest(artist_keys, title):
+        hits = []
+        for sk in sorted(song_keys(title), key=len):
+            hits += [h for h in close(artist_keys, sk) if h not in hits]
+        return hits[:2]
+
     nearly, by_name = [], []
     for key, row in db.library_map().items():
         dz = db.cache_get("dz:" + key) or {}
@@ -547,7 +553,7 @@ def matching_report(limit: int = 150):
             have = _tracks_owned(tracks, row["name"], al.get("title"), songs)
             n, got = len(have), sum(have)
             entry = {"artist": row["name"], "album": al.get("title"), "tracks": f"{got}/{n}",
-                     "unmatched": [{"title": t.get("title"), "closest_in_plex": close(credit_keys(row["name"]), next(iter(song_keys(t.get("title"))), ""))}
+                     "unmatched": [{"title": t.get("title"), "closest_in_plex": closest(credit_keys(row["name"]), t.get("title"))}
                                    for t, h in zip(tracks, have) if not h][:8]}
             if album_key(al.get("title")) in owned and got < n:
                 by_name.append(entry)
@@ -558,7 +564,7 @@ def matching_report(limit: int = 150):
         if owned_track(t, songs):
             continue
         aks = set().union(*(credit_keys(c) for c in (t.get("artists") or []) + [t.get("album_artist") or ""]))
-        hits = close(aks, next(iter(song_keys(t.get("title"))), ""))
+        hits = closest(aks, t.get("title"))
         if hits:
             liked_close.append({"song": t.get("title"), "artist": ", ".join(t.get("artists") or []), "closest_in_plex": hits})
     return _fast({"albums_nearly_complete": nearly[:limit], "owned_by_name_but_tracks_differ": by_name[:limit],

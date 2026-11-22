@@ -746,3 +746,11 @@ def test_matching_rules_from_the_third_report():
     assert _exact_key("Runaway (Live Version)") == _exact_key("Runaway (Live)")      # but versions are kept
     songs = {f"shenandoah|{k}": "1" for k in song_keys("(It's Hard To Live Up To) The Rock")}
     assert tracks_owned([{"title": "(It's Hard To Live Up To) The Rock (Album Version)"}], "Shenandoah", "Super Hits", songs) == [True]
+
+
+def test_soundtrack_titles_from_the_fourth_report():
+    from app.clients import _exact_key, same_song
+    assert same_song('Main Title / Looks Like a Suicide (From "Dance with Wolves" Soundtrack)', "Main Title - Looks Like a Suicide")
+    assert same_song('Fire Dance (From "Dance with Wolves" Soundtrack', "Fire Dance")          # bracket never closed
+    assert _exact_key('Ben (Live) (From "Michael")') == _exact_key("Ben (Live)")
+    assert same_song("Song - Remastered 2011", "Song")
