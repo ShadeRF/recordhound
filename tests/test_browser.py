@@ -644,7 +644,7 @@ def test_liked_not_owned_sorts_groups_and_filters(page, monkeypatch):
         assert "2 songs · 2 releases" in page.locator(".lk-ahead").first.inner_text()
         page.fill("#lkQ", "isab")
         page.wait_for_function("document.querySelectorAll('.lk-row').length === 1")
-        assert page.locator("#lkCount").inner_text() == "1 of 4 releases"
+        assert page.locator("#lkCount").inner_text() == "1 of 4 songs"
         page.locator(".lk-ahead").first.click()   # an artist heading opens the artist
         page.wait_for_selector("#drawer h2")
         assert page.locator("#drawer h2").inner_text() == "Whitney Whitney"
@@ -655,3 +655,50 @@ def test_liked_not_owned_sorts_groups_and_filters(page, monkeypatch):
         page.evaluate("localStorage.removeItem('likedView2')")
         for k in ("spotify_liked", "plex_songs"):
             db.set_meta(k, None)
+
+
+def test_play_buttons_use_spotify_when_connected_and_fall_back_to_previews(page, site, monkeypatch):
+    from app import config, db
+    lib = next(r for r in db.library_map().values() if r.get("albums"))
+    before = db.conn().execute("SELECT json, at FROM cache WHERE k=?", ("dz:" + lib["key"],)).fetchone()
+    db.cache_put("dz:" + lib["key"], {"id": 1, "name": lib["name"], "albums": [{"id": 33, "title": "Spotify Album", "type": "album", "date": "2024-01-01"}]})
+    db.cache_put("dzalb:33", [{"n": 1, "disc": 1, "title": "On Spotify", "duration": 100, "preview": "https://cdn.test/a.mp3", "artist": lib["name"], "isrc": "X1"},
+                              {"n": 2, "disc": 1, "title": "Not On Spotify", "duration": 100, "preview": "https://cdn.test/b.mp3", "artist": lib["name"]}])
+    db.set_meta("spotify_can_play", True)
+    db.commit()
+    monkeypatch.setattr(config, "SPOTIFY_REFRESH_TOKEN", "r")
+    played = []
+
+    class FakeSpotify:
+        def can_play(self):
+            return True
+
+        def find(self, kind, title, artist, isrc=None):
+            return "a" * 22 if title in ("On Spotify", "Spotify Album") else None
+
+        def play(self, kind, sid):
+            played.append((kind, sid))
+            return "Desk PC"
+    monkeypatch.setattr(site["m"], "_spotify_client", lambda: FakeSpotify())
+    try:
+        db.conn().execute("DELETE FROM cache WHERE k LIKE 'spfind:%'"); db.commit()
+        go(page, "home")
+        page.evaluate("([k, n]) => openArtist(k, n)", [lib["key"], lib["name"]])
+        page.click("#drawer button[data-alb='0']")
+        page.wait_for_selector("#albTracks .atrk")
+        page.evaluate("window.said = []; const t = toast; toast = (m, a) => { said.push(m); t(m, a); }")   # every message, in order
+        page.locator("#albTracks .atrk").first.click()
+        page.wait_for_function("said.includes('Playing On Spotify on Desk PC')")
+        page.locator("#albTracks .atrk").nth(1).click()   # not on Spotify: the preview plays instead
+        page.wait_for_function("said.some(m => String(m).startsWith('Not on Spotify'))")
+        assert page.evaluate("document.getElementById('audio').src").endswith("/b.mp3")
+        page.click("[data-alb-spotify]")
+        page.wait_for_function("said.some(m => String(m).startsWith('Playing Spotify Album'))")
+        assert played == [("track", "a" * 22), ("album", "a" * 22)]
+    finally:
+        page.evaluate("document.getElementById('audio').pause()")
+        db.conn().execute("DELETE FROM cache WHERE k IN (?, 'dzalb:33') OR k LIKE 'spfind:%'", ("dz:" + lib["key"],))
+        if before:   # leave the cache as it was, for the tests that run after this one
+            db.conn().execute("INSERT INTO cache(k, json, at) VALUES (?, ?, ?)", ("dz:" + lib["key"], before[0], before[1]))
+        db.set_meta("spotify_can_play", None)
+        db.commit()

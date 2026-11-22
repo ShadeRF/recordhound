@@ -22,7 +22,8 @@ FIELDS = {
     "SPOTIFY_CLIENT_ID": (str, "", True),
     "SPOTIFY_REFRESH_TOKEN": (str, "", True),  # set by "Connect Spotify"
     "SPOTIFY_CONNECTED_AT": (int, 0, False),
-    "SPOTIFY_REDIRECT_URI": (str, "", False),  # empty = the one-click helper page; see clients.spotify_redirect()
+    "SPOTIFY_REDIRECT_URI": (str, "", False),
+    "SPOTIFY_PLAY": (bool, True, False),     # play buttons start the full song in Spotify when connected; off = 30-second previews  # empty = the one-click helper page; see clients.spotify_redirect()
     "LIDARR_URL": (str, "", False),
     "LIDARR_API_KEY": (str, "", True),
     "SYNC_HOUR": (int, 4, False),            # -1 disables the nightly sync

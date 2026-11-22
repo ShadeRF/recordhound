@@ -239,16 +239,35 @@ async function toggleSaved(key) {
 
 // ------------------------------------------------------------------ previews
 const audio = $("audio"); let playing = null;
-function playTrack(i) {
+// Full songs in your Spotify app when connected; the 30-second preview otherwise, or when Spotify can't.
+const WHY_PREVIEW = { not_found: "Not on Spotify", no_device: "No Spotify app is open", reconnect: "Reconnect Spotify to play full songs" };
+async function viaSpotify(kind, title, artist, isrc) {
+  if (!lastStatus.spotify_play) return false;
+  let r = null;
+  try { r = await api("/api/spotify/play-match", { method: "POST", body: JSON.stringify({ kind, title, artist, isrc: isrc || null }) }); } catch {}
+  if (r && r.ok) {
+    if (!audio.paused) audio.pause();
+    toast(`Playing ${title} on ${r.device}`);
+    return true;
+  }
+  const why = (r && (WHY_PREVIEW[r.reason] || r.message)) || "Spotify didn't answer";
+  if (r && r.reason === "reconnect") toast(`${why}. Playing the preview.`, { label: "Reconnect", fn: () => openSetting("spotify") });
+  else toast(kind === "album" ? `${why}.` : `${why}. Playing the preview.`);
+  return false;
+}
+async function playTrack(i) {
   const t = (current?.tracks || [])[i]; if (!t) return;
+  if (await viaSpotify("track", t.title, current.name, t.isrc)) return;
   const id = current.key + ":" + i;
   if (playing === id && !audio.paused) { audio.pause(); return; }
   audio.src = t.preview; audio.play().catch(() => toast("Couldn't play that preview"));
   playing = id; nowPlaying(t, current.name);
 }
 let albumTracks = [];   // the open album's tracks
-function playAlbumTrack(i) {
-  const t = albumTracks.find(x => x.i === i); if (!t || !t.preview) return;
+async function playAlbumTrack(i) {
+  const t = albumTracks.find(x => x.i === i); if (!t) return;
+  if (await viaSpotify("track", t.title, t.by, t.isrc)) return;
+  if (!t.preview) return;
   const id = `alb:${t.album}:${i}`;
   if (playing === id && !audio.paused) { audio.pause(); return; }
   audio.src = t.preview; audio.play().catch(() => toast("Couldn't play that preview"));
@@ -370,7 +389,7 @@ function renderDrawer(r, loading) {
     ${(r.tracks || []).length ? `<div class="sec"><h4>Listen</h4><div class="tracks">${r.tracks.map((t, i) => `
       <div class="trk" data-i="${i}"><button class="pb" aria-label="Play">${ICON.play}</button>${t.cover ? `<img src="${esc(t.cover)}" alt="">` : ""}
         <div class="nm"><b>${esc(t.title)}</b><small>${esc(t.album || "")}</small></div><div class="tprog"><i></i></div></div>`).join("")}</div>
-      <div class="help" style="color:var(--dim);font-size:12px;margin-top:6px">30-second previews from Deezer.</div></div>` : ""}
+      <div class="help" style="color:var(--dim);font-size:12px;margin-top:6px">${lastStatus.spotify_play ? "Plays the full song in your Spotify app." : "30-second previews from Deezer."}</div></div>` : ""}
     ${b.length ? `<div class="sec"><h4>Why this pick</h4><div class="seeds">${b.map(x => `
       <div class="seed" data-open="${esc(x.key)}" style="cursor:pointer">
         <div class="th" style="border-radius:50%;background-image:url('${artURL(x)}')"></div>
@@ -408,6 +427,7 @@ function showAlbum(i) {
       <div class="albacts">
         ${plex ? `<a class="btn primary" href="${plex}" target="_blank" rel="noopener"><img class="svc" src="${fav("plex.tv")}" alt="">Open in Plex</a>` : ""}
         ${lastStatus.lidarr && !a.owned ? `<button class="btn primary" data-alb-lidarr>${ICON.plus}Add album to Lidarr</button>` : ""}
+        ${lastStatus.spotify_play ? `<button class="btn lk-sp" data-alb-spotify>${ICON.play}Play album on Spotify</button>` : ""}
         ${a.id ? `<a class="btn" href="https://www.deezer.com/album/${encodeURIComponent(a.id)}" target="_blank" rel="noopener"><img class="svc" src="${fav("deezer.com")}" alt="">Deezer</a>` : ""}
         <a class="btn" href="https://open.spotify.com/search/${q}" target="_blank" rel="noopener"><img class="svc" src="${fav("spotify.com")}" alt="">Spotify</a></div>
       <div class="albl" hidden></div></div>
@@ -427,7 +447,7 @@ async function loadAlbumTracks(r, a, i) {
     albumTracks.map(t => {
       const head = discs && t.disc !== disc ? `<div class="adisc">Disc ${disc = t.disc}</div>` : "";
       return `${head}<div class="atrk" data-alb="${esc(a.id)}" data-ai="${t.i}">
-        ${t.preview ? `<button class="pb" aria-label="Play ${esc(t.title)}">${ICON.play}</button>` : `<span class="pb off" title="No preview"></span>`}
+        ${t.preview || lastStatus.spotify_play ? `<button class="pb" aria-label="Play ${esc(t.title)}">${ICON.play}</button>` : `<span class="pb off" title="No preview"></span>`}
         <span class="an">${t.n || ""}</span><span class="nm">${esc(t.title)}${t.artist && t.artist !== r.name ? ` <small>${esc(t.artist)}</small>` : ""}</span>
         ${t.liked ? `<span class="lk-heart" title="Liked on Spotify">♥</span>` : ""}${t.owned ? `<span class="own-t" title="In your Plex library">✓</span>` : ""}
         <span class="tprog"><i></i></span><span class="dur">${mmss(t.duration)}</span></div>`;
@@ -455,6 +475,7 @@ $("drawer").addEventListener("click", async e => {
   const t = e.target.closest(".trk"); if (t) { playTrack(+t.dataset.i); return; }
   const at = e.target.closest(".atrk"); if (at) { playAlbumTrack(+at.dataset.ai); return; }
   const ab = e.target.closest("button[data-alb]"); if (ab) { showAlbum(+ab.dataset.alb); return; }
+  if (e.target.closest("[data-alb-spotify]")) { const a = current.albums[+$("albBox").dataset.i]; viaSpotify("album", a.title, current.name); return; }
   if (e.target.closest("[data-alb-lidarr]")) {
     const box = document.querySelector("#albBox .albl");
     if (!box.hidden) { box.hidden = true; return; }
@@ -657,9 +678,10 @@ const LK_SORTS = {
 };
 function likedItems() {
   const q = likedQ.toLowerCase(), cmp = (LK_SORTS[LK.sort] || LK_SORTS.new)[1];
+  const songsOf = list => list.flatMap(a => (a.tracks || a.songs.map(t => ({ title: t, added_at: a.added_at }))).map(t => ({
+    ...t, a, album: a.title, title: t.title, artist: a.artist, year: a.year, count: a.songs.length, single: t.single })));
   if (LK.group === "none") {   // one row per song
-    const songs = liked.albums.flatMap(a => (a.tracks || a.songs.map(t => ({ title: t, added_at: a.added_at }))).map(t => ({
-      ...t, a, album: a.title, title: t.title, artist: a.artist, year: a.year, count: a.songs.length, single: t.single })));
+    const songs = songsOf(liked.albums);
     const hit = songs.filter(s => !q || [s.title, s.album, s.artist].some(x => (x || "").toLowerCase().includes(q)));
     const scmp = LK.sort === "album" ? (x, y) => bare(x.album).localeCompare(bare(y.album)) || byNew(x, y) : cmp;
     return { count: hit.length, of: songs.length, unit: "song", items: hit.sort(scmp).map(s => ({ s })) };
@@ -675,7 +697,9 @@ function likedItems() {
     if ((a.year || "") > g.year) g.year = a.year;
   }
   const outer = LK.sort === "album" ? LK_SORTS.artist[1] : cmp, inner = ["album", "year", "old"].includes(LK.sort) ? cmp : byNew;
-  return { count: albums.length, items: [...groups.values()].sort(outer).flatMap(g => [{ head: g }, ...g.albums.sort(inner).map(a => ({ a }))]) };
+  const songCmp = LK.sort === "album" ? (x, y) => bare(x.album).localeCompare(bare(y.album)) || byNew(x, y) : inner;
+  const items = [...groups.values()].sort(outer).flatMap(g => [{ head: g }, ...songsOf(g.albums).sort(songCmp).map(s => ({ s }))]);
+  return { count: items.filter(x => x.s).length, of: songsOf(liked.albums).length, unit: "song", items };
 }
 const likedHead = g => `<div class="lk-ahead" data-lk-head="${esc(g.artist_key)}" data-name="${esc(g.artist)}" tabindex="0" title="Open ${esc(g.artist)}">
   <b>${esc(g.artist)}</b><small>${g.songs.length} song${g.songs.length === 1 ? "" : "s"}${g.albums.length > 1 ? ` · ${g.albums.length} releases` : ""}</small></div>`;
@@ -716,7 +740,7 @@ function likedSongRow(s) {
   return `<div class="lk-row" data-lk="${esc(a.id)}" ${s.id ? `data-song="${esc(s.id)}"` : ""} tabindex="0" title="Open ${esc(a.artist || "")}">
     ${a.cover ? `<img class="lk-cover" loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="lk-cover"></div>`}
     <div class="lk-main"><div class="lk-t">${esc(s.title || "")}</div>
-      <div class="lk-s"><span class="lk-a">${esc(a.artist || "")}</span>${same ? "" : ` · ${esc(s.album || "")}`}${a.year ? " · " + esc(a.year) : ""}${a.type === "single" ? " · Single" : ""}${s.single ? ` <span class="lk-was" title="You liked the single “${esc(s.single)}”">· first out as a single</span>` : ""}</div>
+      <div class="lk-s"><span class="lk-a">${esc(a.artist || "")}</span> · ${a.type === "single" && same ? "Single" : `from <i class="lk-from">${esc(s.album || "")}</i>${a.type === "single" ? " (single)" : a.type === "ep" ? " (EP)" : ""}`}${a.year ? " · " + esc(a.year) : ""}${s.single ? ` <span class="lk-was" title="You liked the single “${esc(s.single)}”">· first out as a single</span>` : ""}</div>
       ${s.added_at ? `<div class="lk-when"><span class="lk-heart" aria-label="Liked">♥</span> ${esc(likedDay(s.added_at))}</div>` : ""}</div>
     <div class="lk-act">${spotifyLink("track", s.id)}${!lid ? "" : a.requested ? `<span class="pill on">✓ Sent to Lidarr</span>` : `<button class="btn primary" data-lk-lidarr>${ICON.plus}Add ${a.type === "single" ? "single" : "album"} to Lidarr</button>`}
       <button class="btn" data-lk-hide>Hide</button></div>
@@ -737,9 +761,9 @@ function likedRow(a) {
   const lid = lastStatus.lidarr;
   return `<div class="lk-row" data-lk="${esc(a.id)}" tabindex="0" title="Open ${esc(a.artist || "")}">
     ${a.cover ? `<img class="lk-cover" loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="lk-cover"></div>`}
-    <div class="lk-main"><div class="lk-t">${esc(a.title || "")}</div>
-      <div class="lk-s"><span class="lk-a">${esc(a.artist || "")}</span>${a.year ? " · " + esc(a.year) : ""}${a.type === "single" ? " · Single" : a.type === "compilation" ? " · Compilation" : a.type === "ep" ? " · EP" : ""}${a.linked ? ` <span class="lk-was">· you liked singles from it</span>` : ""}</div>
-      <div class="lk-songs"><span class="lk-heart" aria-label="Liked">♥</span> ${a.songs.map(esc).join(" · ")}</div></div>
+    <div class="lk-main"><div class="lk-kind">${{ single: "Single", ep: "EP", compilation: "Compilation" }[a.type] || "Album"}</div><div class="lk-t">${esc(a.title || "")}</div>
+      <div class="lk-s"><span class="lk-a">${esc(a.artist || "")}</span>${a.year ? " · " + esc(a.year) : ""}${a.linked ? ` <span class="lk-was">· you liked singles from it</span>` : ""}</div>
+      <div class="lk-songs"><span class="lk-heart" aria-label="Liked">♥</span> <span class="lk-lbl">You liked:</span> ${a.songs.map(esc).join(" · ")}</div></div>
     <div class="lk-act">${spotifyLink("album", a.id)}${!lid ? "" : a.requested ? `<span class="pill on">✓ Sent to Lidarr</span>` : `<button class="btn primary" data-lk-lidarr>${ICON.plus}Add album to Lidarr</button>`}
       <button class="btn" data-lk-hide>Hide</button></div>
     <div class="lk-box" hidden></div></div>`;
@@ -1116,7 +1140,9 @@ function renderSettings() {
       <h4>2 · Connect your account</h4>
       <p class="sub">Keeps your top artists, followed artists and saved albums up to date on every sync. Spotify only allows this through a personal developer app, which needs Spotify Premium and works for up to 5 people.</p>
       ${spConnected ? `<p>✓ Connected${spAge != null ? ` ${spAge} day${spAge === 1 ? "" : "s"} ago` : ""}. ${S.stats.history.spotify ? `${S.stats.history.spotify} artists.` : ""}
-          ${S.spotify_can_play === false ? `<b>Reconnect once so the Play on Spotify buttons can start songs in your Spotify app.</b>` : ""}
+          ${S.spotify_can_play === false ? `<b>Reconnect once so play buttons can start songs in your Spotify app.</b>` : ""}</p>
+        <label class="inline" style="margin:8px 0 2px"><input type="checkbox" data-k="SPOTIFY_PLAY" ${val("SPOTIFY_PLAY") ? "checked" : ""}> Play buttons play the full song in Spotify ${srcTag("SPOTIFY_PLAY")}</label>
+        <p class="help" style="margin:0 0 8px 24px">On the Spotify app you're using, or your computer's. Songs that aren't on Spotify, or times no Spotify app is open, get the 30-second preview. Turn it off to always hear previews.</p><p>
           ${spAge != null && spAge > 160 ? `<b>Spotify ends connections after six months, so reconnect soon.</b>` : ""}</p>
         <div class="filerow"><button class="btn" data-test="spotify">Test</button><button class="btn" id="spReconnect">Reconnect</button><button class="btn warn" id="spDisconnect">Disconnect</button><span class="tres" id="tres-spotify"></span></div>
         ${spPaste ? "" : `<p class="help"><button class="link accent" id="spPasteShow">Didn't come back after reconnecting? Paste the address instead</button></p>${spPasteBox}`}${spOld}`

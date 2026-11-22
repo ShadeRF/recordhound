@@ -489,6 +489,20 @@ class Spotify:
             raise APIError(f"Spotify couldn't start playback ({r.status_code})")
         return dev.get("name") or "Spotify"
 
+    def find(self, kind, title, artist, isrc=None):
+        """Spotify's id for a song (by ISRC when known, else title and artist) or an album. None when it isn't there."""
+        if kind == "track" and isrc:
+            items = self._get("/search", q=f"isrc:{isrc}", type="track", limit=1).get("tracks", {}).get("items", [])
+            if items:
+                return items[0]["id"]
+        want_t, want_a = (song_key if kind == "track" else album_key)(title), credit_keys(artist)
+        d = self._get("/search", q=f'{"track" if kind == "track" else "album"}:"{title}" artist:"{artist}"', type=kind, limit=10)
+        for it in d.get(kind + "s", {}).get("items", []):
+            names = {k for a in it.get("artists", []) for k in credit_keys(a.get("name"))}
+            if names & want_a and (song_key if kind == "track" else album_key)(it.get("name")) == want_t:
+                return it["id"]
+        return None
+
     def liked_tracks(self):
         """Your Liked Songs, newest first: title, every credited artist, and the album it's on."""
         out, url, params = [], "/me/tracks", {"limit": 50}
@@ -672,13 +686,13 @@ class Deezer:
 
     def top_tracks(self, artist_id, n=5):
         return [{"title": t.get("title"), "preview": t.get("preview"), "album": (t.get("album") or {}).get("title"),
-                 "cover": (t.get("album") or {}).get("cover_medium"), "duration": t.get("duration")}
+                 "cover": (t.get("album") or {}).get("cover_medium"), "duration": t.get("duration"), "isrc": t.get("isrc")}
                 for t in self._get(f"/artist/{artist_id}/top", limit=n).get("data", []) if t.get("preview")]
 
     def album_tracks(self, album_id):
         """An album's track list, in order, with 30-second previews."""
         return [{"n": t.get("track_position"), "disc": t.get("disk_number") or 1, "title": t.get("title"), "duration": t.get("duration"),
-                 "preview": t.get("preview") or None, "artist": (t.get("artist") or {}).get("name")}
+                 "preview": t.get("preview") or None, "artist": (t.get("artist") or {}).get("name"), "isrc": t.get("isrc")}
                 for t in self._get(f"/album/{album_id}/tracks", limit=200).get("data", [])]
 
     def albums(self, artist_id):

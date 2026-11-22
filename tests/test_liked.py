@@ -417,3 +417,39 @@ def test_liked_singles_are_linked_to_the_album_they_ended_up_on(client, monkeypa
     s.link_singles()   # found ones aren't looked up again; ones without an album wait two weeks
     assert len(calls) == n
     db.set_meta("single_links", None)
+
+
+def test_spotify_finds_the_same_song_by_isrc_or_name():
+    sp = object.__new__(clients.Spotify)
+    asked = []
+
+    def get(url, **p):
+        asked.append(p["q"])
+        if p["q"] == "isrc:GBAYE0601498":
+            return {"tracks": {"items": [{"id": "byisrc"}]}}
+        if p["type"] == "track":
+            return {"tracks": {"items": [{"id": "wrong", "name": "Idioteque", "artists": [{"name": "Somebody Else"}]},
+                                         {"id": "right", "name": "Idioteque - Remastered", "artists": [{"name": "Radiohead"}]}]}}
+        return {"albums": {"items": [{"id": "kida", "name": "Kid A (Deluxe Edition)", "artists": [{"name": "Radiohead"}]}]}}
+    sp._get = get
+    assert sp.find("track", "Karma Police", "Radiohead", "GBAYE0601498") == "byisrc"
+    assert sp.find("track", "Idioteque", "Radiohead") == "right"
+    assert sp.find("album", "Kid A", "Radiohead") == "kida"
+    assert sp.find("track", "Nothing Like It", "Radiohead") is None
+
+
+def test_play_match_remembers_what_it_found(client, monkeypatch):
+    c, m = client
+    found = []
+    sp = spotify_with([{"id": "pc", "name": "Desk PC", "type": "Computer"}])
+    sp.find = lambda kind, title, artist, isrc=None: found.append(title) or ("x" * 22 if title != "Missing" else None)
+    monkeypatch.setattr(m, "_spotify_client", lambda: sp)
+    db.conn().execute("DELETE FROM cache WHERE k LIKE 'spfind:%'")
+    db.commit()
+    body = {"title": "Idioteque", "artist": "Radiohead", "isrc": "GBAYE0000351"}
+    assert c.post("/api/spotify/play-match", json=body).json() == {"ok": True, "device": "Desk PC"}
+    c.post("/api/spotify/play-match", json=body)
+    assert found == ["Idioteque"] and sp.sent[-1][1] == {"uris": ["spotify:track:" + "x" * 22]}
+    assert c.post("/api/spotify/play-match", json={"title": "Missing", "artist": "Radiohead"}).json()["reason"] == "not_found"
+    assert c.post("/api/spotify/play-match", json={"kind": "album", "title": "Kid A", "artist": "Radiohead"}).json()["ok"]
+    assert sp.sent[-1][1] == {"context_uri": "spotify:album:" + "x" * 22}

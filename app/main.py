@@ -155,6 +155,7 @@ def status():
         "configured": config.configured(), "artist_source": _source_name(), "lidarr": _lidarr_on(), "lidarr_url": config.LIDARR_URL,
         "plex_url": config.PLEX_URL, "plex_machine": db.get_meta("plex_machine"),
         "spotify": bool(config.SPOTIFY_REFRESH_TOKEN), "auth": auth.enabled(), "user": config.AUTH_USERNAME,
+        "spotify_play": bool(config.SPOTIFY_REFRESH_TOKEN and config.SPOTIFY_PLAY and db.get_meta("spotify_can_play") is not False),
         "history": db.history_counts(),
     }
 
@@ -929,6 +930,39 @@ def spotify_play(body: SpotifyPlay):
         if not sp.can_play():
             return {"ok": False, "reason": "reconnect"}
         return {"ok": True, "device": sp.play(body.kind, body.id)}
+    except SpotifyNoDevice:
+        return {"ok": False, "reason": "no_device"}
+    except Exception as e:
+        return {"ok": False, "reason": "error", "message": friendly_error(e)}
+
+
+class SpotifyFind(BaseModel):
+    kind: str = "track"
+    title: str
+    artist: str
+    isrc: str | None = None
+
+
+@app.post("/api/spotify/play-match")
+def spotify_play_match(body: SpotifyFind):
+    """Play a song or album found by name (from Deezer: artist pages and album panels) in your Spotify app."""
+    if body.kind not in ("track", "album"):
+        raise HTTPException(400, "That isn't a song or album")
+    if not config.SPOTIFY_REFRESH_TOKEN:
+        return {"ok": False, "reason": "not_connected"}
+    key = f"spfind:{body.kind}:" + (body.isrc or f"{artist_key(body.artist)}|{song_key(body.title) if body.kind == 'track' else album_key(body.title)}")
+    try:
+        sp = _spotify_client()
+        if not sp.can_play():
+            return {"ok": False, "reason": "reconnect"}
+        hit = db.cache_get(key, 60)
+        if hit is None or (not hit.get("id") and db.cache_get(key, 7) is None):   # misses are tried again after a week
+            hit = {"id": sp.find(body.kind, body.title, body.artist, body.isrc)}
+            db.cache_put(key, hit)
+            db.commit()
+        if not hit["id"]:
+            return {"ok": False, "reason": "not_found"}
+        return {"ok": True, "device": sp.play(body.kind, hit["id"])}
     except SpotifyNoDevice:
         return {"ok": False, "reason": "no_device"}
     except Exception as e:
