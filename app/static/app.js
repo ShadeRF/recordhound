@@ -663,10 +663,10 @@ async function loadGaps() {
   const opts = `<div class="lib-tools gap-opts"><label class="inline"><input type="checkbox" data-gap-opt="GAPS_EPS" ${d.eps ? "checked" : ""}> EPs</label>
     <label class="inline"><input type="checkbox" data-gap-opt="GAPS_SPECIAL" ${d.special ? "checked" : ""}> Remixes, live albums, compilations and reissues</label></div>`;
   listShell("Albums you're missing", `${what.length > 1 ? what.slice(0, -1).join(", ") + " and " + what.at(-1) : "Albums"} from artists you already collect, most popular first.`.replace(/^./, c => c.toUpperCase()),
-    d.groups.length ? d.groups.map(g => `<div class="gap"><div class="gap-head" data-open-artist="${esc(g.key)}">
+    d.groups.length ? `<div class="gaps">${d.groups.map(g => `<div class="gap${g.albums.length <= 3 ? " few" : ""}"><div class="gap-head" data-open-artist="${esc(g.key)}">
         <span class="gap-ph" style="background-image:url('${esc(g.picture || "")}')"></span>
         <div><h3>${esc(g.name)}</h3><div class="muted">You have ${g.owned} of ${g.total}</div><div class="meter"><i style="width:${Math.round(g.owned / g.total * 100)}%"></i></div></div></div>
-        <div class="hwrap"><button class="scroll-btn l" aria-label="Scroll left">${ICON.left}</button><div class="hscroll" data-list>${g.albums.map(a => albumCard(a)).join("")}</div><button class="scroll-btn r" aria-label="Scroll right">${ICON.right}</button></div></div>`).join("")
+        <div class="hwrap"><button class="scroll-btn l" aria-label="Scroll left">${ICON.left}</button><div class="hscroll" data-list>${g.albums.map(a => albumCard(a)).join("")}</div><button class="scroll-btn r" aria-label="Scroll right">${ICON.right}</button></div></div>`).join("")}</div>`
       : `<div class="empty">${d.at ? "Nothing missing. Your collection is complete." : "This fills in after your next full sync."}</div>`, opts);
   document.querySelectorAll("[data-gap-opt]").forEach(cb => cb.onchange = async () => {
     try { await api("/api/settings", { method: "PUT", body: JSON.stringify({ [cb.dataset.gapOpt]: cb.checked }) }); } catch (e) { toast(e.message); cb.checked = !cb.checked; return; }

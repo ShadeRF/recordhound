@@ -756,3 +756,9 @@ input[type=search]::-webkit-search-cancel-button:hover { opacity: 1; }
 .ns-more input[type=search] { width: 100%; max-width: 260px; margin-bottom: 10px; }
 .ns-more .chips.pick { max-height: 320px; overflow-y: auto; }
 .ns-more-note { font-size: 13px; margin: 0 0 8px; }
+/* Groups with only a few titles sit side by side instead of taking a whole row each */
+.gaps { display: flex; flex-wrap: wrap; gap: 0 44px; align-items: flex-start; }
+.gaps > .gap { flex: 1 1 100%; min-width: 0; }
+.gaps > .gap.few { flex: 0 1 auto; max-width: 100%; }
+.gap.few .hscroll { overflow: visible; }
+.gap.few .scroll-btn { display: none; }
