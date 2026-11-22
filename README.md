@@ -11,11 +11,11 @@ Self-hosted music recommendations built from **your** Plex library and listening
 Browse new artists, see why each one was picked, preview them, and send what you want to Lidarr.
 Nothing is ever downloaded automatically.
 
-Sibling app for movies and TV: [Filmhound](https://github.com/ShadeRF/unraid-templates/blob/main/docs/filmhound.md).
+Sibling app for movies and TV: [Filmhound](https://github.com/ShadeRF/filmhound).
 
 ## Install
 
-**Unraid:** search for **Recordhound** in Community Apps. Full guide: [docs/recordhound.md](https://github.com/ShadeRF/unraid-templates/blob/main/docs/recordhound.md).
+**Unraid:** search for **Recordhound** in Community Apps. Setup is covered in [the Unraid guide](https://github.com/ShadeRF/unraid-templates/blob/main/docs/recordhound.md).
 
 **Docker anywhere else:**
 
