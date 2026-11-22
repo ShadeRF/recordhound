@@ -681,8 +681,24 @@ const likedHead = g => `<div class="lk-ahead" data-lk-head="${esc(g.artist_key)}
   <b>${esc(g.artist)}</b><small>${g.songs.length} song${g.songs.length === 1 ? "" : "s"}${g.albums.length > 1 ? ` · ${g.albums.length} releases` : ""}</small></div>`;
 const likedItem = x => x.head ? likedHead(x.head) : x.s ? likedSongRow(x.s) : likedRow(x.a);
 const likedDay = iso => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""; };
-// Opens Spotify on that exact song or album: in the app if it's installed, otherwise the web player.
-const spotifyLink = (kind, id) => /^[A-Za-z0-9]{22}$/.test(id || "") ? `<a class="btn lk-sp" href="https://open.spotify.com/${kind}/${id}" target="_blank" rel="noopener" title="Play on Spotify"><img class="svc" src="${fav("spotify.com")}" alt="">Spotify</a>` : "";
+// Opens that exact song or album in the Spotify app. The link itself is the web player's address, so Ctrl-click,
+// middle-click and "copy link" still work, and it's offered as a fallback when no app answers.
+const spotifyLink = (kind, id) => /^[A-Za-z0-9]{22}$/.test(id || "") ? `<a class="btn lk-sp" href="https://open.spotify.com/${kind}/${id}" data-app="spotify:${kind}:${id}" target="_blank" rel="noopener"
+  title="${kind === "track" ? "Plays this song in the Spotify app" : "Opens this release in the Spotify app"}">${kind === "track" ? `${ICON.play}Play on Spotify` : `<img class="svc" src="${fav("spotify.com")}" alt="">Open in Spotify`}</a>` : "";
+document.addEventListener("click", e => {
+  const a = e.target.closest && e.target.closest("a.lk-sp[data-app]");
+  if (!a || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  let left = false;
+  const gone = () => { left = true; };
+  window.addEventListener("blur", gone, { once: true });
+  document.addEventListener("visibilitychange", gone, { once: true });
+  location.href = a.dataset.app;   // the installed app takes over (the browser may ask first)
+  setTimeout(() => {
+    window.removeEventListener("blur", gone); document.removeEventListener("visibilitychange", gone);
+    if (!left) toast("Didn't open? The Spotify app may not be installed here.", { label: "Open in web player", fn: () => window.open(a.href, "_blank", "noopener") });
+  }, 2500);
+});
 function likedSongRow(s) {
   const a = s.a, lid = lastStatus.lidarr, same = (s.album || "").toLowerCase() === (s.title || "").toLowerCase();
   return `<div class="lk-row" data-lk="${esc(a.id)}" ${s.id ? `data-song="${esc(s.id)}"` : ""} tabindex="0" title="Open ${esc(a.artist || "")}">

@@ -627,6 +627,8 @@ def test_liked_not_owned_sorts_groups_and_filters(page, monkeypatch):
         assert page.locator("[data-lk-group=none].on").count() == 1 and "♥" in page.locator(".lk-row").first.inner_text()
         page.evaluate("liked.albums[0].tracks[0].id = '4uLU6hMCjMI75M1A2tKUQC'; renderLikedList()")   # a real-looking Spotify id
         assert page.locator(".lk-row").first.locator(".lk-sp").get_attribute("href") == "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"
+        assert page.locator(".lk-row").first.locator(".lk-sp").inner_text().strip() == "Play on Spotify"
+        assert page.locator(".lk-row").first.locator(".lk-sp").get_attribute("data-app") == "spotify:track:4uLU6hMCjMI75M1A2tKUQC"
         page.select_option("#lkSort", "artist")
         assert titles() == ["Feels So Far Away", "Lead Me Home", "Isabelle", "A Man Written by a Woman"]
         page.select_option("#lkSort", "new")
