@@ -1,0 +1,17 @@
+# Weekly pull requests when the workflow actions or Python packages have updates
+# (this is how you'll hear about the next Node runtime change, too).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+    ignore:
+      # checkout v5.0.1+ couldn't fetch the repo with the workflow token while it was private (Nov 2026); safe to lift now
+      - dependency-name: actions/checkout
+        versions: [">5.0.0"]
+  - package-ecosystem: pip
+    directory: /
+    schedule: {interval: weekly}
+  - package-ecosystem: docker
+    directory: /
+    schedule: {interval: weekly}

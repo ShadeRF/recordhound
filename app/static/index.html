@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recordhound</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#0e0d0c">
+<link rel="stylesheet" href="/static/app.css?v=10">
+</head>
+<body>
+<header>
+  <div class="bar">
+    <a class="logo" href="#/home" aria-label="Recordhound home"><img src="/static/icon.svg" alt="" width="32" height="32"><img class="wm" src="/static/wordmark.svg?v=1" alt="Recordhound" height="26"></a>
+    <nav class="tabs" id="nav">
+      <button data-view="home">For You</button>
+      <button data-view="picks">All Picks</button>
+      <button data-view="stream">You Stream</button>
+      <button data-view="library">Your Library</button>
+      <button data-view="saved">Saved</button>
+      <button data-view="rate">Rate</button>
+      <button data-view="history">History</button>
+    </nav>
+    <div class="status" id="status" title="">…</div>
+    <form class="gsearch" id="gsearch" role="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><input type="search" id="gq" placeholder="Search any artist" aria-label="Search artists"></form>
+    <button class="ibtn" id="sync" title="Sync now: re-read Plex and your listening history, then refresh your picks"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.7L4 15.5M4 20v-4.5h4.5"/></svg></button>
+    <button class="ibtn" data-view="settings" id="gear" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+  </div>
+  <div class="filters" id="filters">
+    <input type="search" id="q" placeholder="Filter by name">
+    <button class="fbtn" data-pop="tags">Genres &amp; tags <span class="car">▼</span></button>
+    <span class="seg" id="popSeg"><button data-pop-v="" class="on">Any size</button><button data-pop-v="deep">Deep cuts</button><button data-pop-v="mid">Mid</button><button data-pop-v="known">Well known</button></span>
+    <select class="sort" id="sort">
+      <option value="score">Sort: Best match</option><option value="obscure">Sort: Least known</option>
+      <option value="popular">Sort: Most listeners</option><option value="name">Sort: Name</option>
+    </select>
+    <div class="pop" id="pop"></div>
+  </div>
+  <div class="active-row" id="activeRow"></div>
+</header>
+
+<main>
+  <section id="v-home" class="view"><div id="homeRows"></div></section>
+  <section id="v-grid" class="view">
+    <div id="gridHead"></div>
+    <p class="count" id="count"></p>
+    <div class="grid" id="grid" data-list></div>
+    <div id="sentinel" style="height:1px"></div>
+  </section>
+  <section id="v-list" class="view"><div id="listBody"></div></section>
+  <section id="v-rate" class="view"><div id="rateBody"></div></section>
+  <section id="v-history" class="view">
+    <div class="pills" id="pills"></div>
+    <div class="hgrid" id="hiddenGrid"></div>
+  </section>
+  <section id="v-setup" class="view"><div class="setup" id="setupBody"></div></section>
+  <section id="v-settings" class="view">
+    <div class="settings" id="settingsBody"></div>
+    <div class="savebar" id="savebar"><span style="color:var(--dim)">You have unsaved changes</span>
+      <button class="btn" id="discard">Discard</button><button class="btn primary" id="saveBtn">Save changes</button></div>
+  </section>
+</main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Details"></aside>
+<div class="nowplaying" id="np"></div>
+<div class="toast" id="toast"></div>
+<audio id="audio" preload="none"></audio>
+<script src="/static/app.js?v=13"></script>
+</body>
+</html>

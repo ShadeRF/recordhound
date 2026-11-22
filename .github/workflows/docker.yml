@@ -1,0 +1,116 @@
+name: Publish image
+
+# Releases: push a version tag (git tag v1.2.3 && git push origin v1.2.3). That publishes
+#   ghcr.io/shaderf/recordhound:1.2.3, :1.2 and :latest, so Unraid shows "update available" exactly when you ship one.
+# Nightly: every night, if main has commits the last nightly didn't have, publishes :nightly from main.
+# Edge: run the workflow by hand (Actions tab or `gh workflow run docker.yml`) to publish :edge from main right away,
+#   for testing changes before they're released. Neither touches :latest.
+# Only the newest version tag moves :latest, so building an older tag (or pushing one by accident) can't move it back.
+# The tests run first on every build, then the browser tests in Chrome; nothing is published if either fails.
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "41 8 * * *"   # 08:41 UTC, about 3:41 AM Eastern
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  actions: read   # to see whether last night's build already covered this commit
+
+concurrency:   # one build at a time per tag or branch
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # held at v5.0.0: v5.0.1+ couldn't fetch this repo while it was private (see DEVELOPMENT.md)
+      - uses: actions/checkout@v5.0.0
+        with:
+          persist-credentials: false
+      - id: kind
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            release='^v[0-9]+\.[0-9]+\.[0-9]+$'
+            if ! printf '%s\n' "$GITHUB_REF_NAME" | grep -Eq "$release"; then
+              echo "::error::$GITHUB_REF_NAME isn't a release tag (expected something like v1.2.3). Nothing was published."
+              exit 1
+            fi
+            newest="$(gh api "repos/$GH_REPO/tags" --paginate --jq '.[].name' | grep -E "$release" | sort -V | tail -n 1)"
+            if [ -z "$newest" ]; then
+              echo "::error::Couldn't read this repo's tags, so can't tell whether $GITHUB_REF_NAME is the newest. Nothing was published."
+              exit 1
+            fi
+            if [ "$newest" = "$GITHUB_REF_NAME" ]; then
+              echo "latest=true" >> "$GITHUB_OUTPUT"
+              echo "Release build for $GITHUB_REF_NAME, the newest version: :latest moves to it."
+            else
+              echo "Release build for $GITHUB_REF_NAME. $newest is newer, so :latest stays where it is."
+            fi
+            exit 0
+          fi
+          sha="$(git rev-parse HEAD)"
+          channel="edge"
+          [ "$GITHUB_EVENT_NAME" = "schedule" ] && channel="nightly"
+          echo "build=$channel.$(date -u +%Y%m%d).$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            # only scheduled runs count: an :edge build of this commit doesn't mean :nightly has it
+            last="$(gh run list --workflow docker.yml --branch main --event schedule --status success --limit 1 --json headSha --jq '.[0].headSha')"
+            if [ "$last" = "$sha" ]; then
+              echo "Nothing new on main since the last nightly ($sha). Skipping."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+      - if: steps.kind.outputs.skip != 'true'
+        name: Run the tests on the same Python the image uses
+        run: |
+          base="$(sed -n 's/^FROM //p' Dockerfile | head -n 1)"
+          docker run --rm -v "$PWD":/src -w /src -e PYTHONDONTWRITEBYTECODE=1 "$base" \
+            sh -c "pip install -q --no-cache-dir --root-user-action=ignore -r requirements.txt pytest httpx && python -m pytest -q -p no:cacheprovider"
+      - if: steps.kind.outputs.skip != 'true'
+        name: Run the browser tests in Chrome (already on GitHub's build machines)
+        env:
+          REQUIRE_BROWSER: "1"
+        run: |
+          python3 -m venv "$RUNNER_TEMP/bt"
+          "$RUNNER_TEMP/bt/bin/pip" install -q --disable-pip-version-check -r requirements.txt pytest httpx playwright
+          command -v google-chrome >/dev/null || "$RUNNER_TEMP/bt/bin/python" -m playwright install --with-deps chromium
+          PYTHONDONTWRITEBYTECODE=1 "$RUNNER_TEMP/bt/bin/python" -m pytest -q -p no:cacheprovider tests/test_browser.py
+      - if: steps.kind.outputs.skip != 'true'
+        uses: docker/setup-qemu-action@v4
+      - if: steps.kind.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v4
+      - if: steps.kind.outputs.skip != 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - if: steps.kind.outputs.skip != 'true'
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/recordhound
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ steps.kind.outputs.latest == 'true' }}
+            type=raw,value=nightly,enable=${{ github.event_name == 'schedule' }}
+            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' }}
+      - if: steps.kind.outputs.skip != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: APP_BUILD=${{ steps.kind.outputs.build }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

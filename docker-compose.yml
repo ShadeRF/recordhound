@@ -1,0 +1,17 @@
+services:
+  recordhound:
+    build: .
+    image: recordhound:latest
+    container_name: recordhound
+    restart: unless-stopped
+    ports:
+      - "8789:8789"
+    volumes:
+      - /mnt/user/appdata/recordhound/data:/data
+      - ./app:/srv/app   # live code: updates only need a container restart, not a rebuild
+    labels:
+      net.unraid.docker.icon: https://raw.githubusercontent.com/ShadeRF/unraid-templates/main/icons/recordhound.png
+      net.unraid.docker.webui: http://[IP]:[PORT:8789]/
+    environment:
+      TZ: America/New_York
+      # Everything else is set on the Settings page (saved in /data/settings.json).
