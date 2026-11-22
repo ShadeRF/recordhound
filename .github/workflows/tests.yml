@@ -1,0 +1,35 @@
+name: Tests
+
+# Runs the tests on every pull request, so Dependabot updates show a pass or fail before they're merged.
+# (Builds run the same tests themselves before publishing: see docker.yml.)
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # held at v5.0.0: v5.0.1+ couldn't fetch this repo while it was private (see DEVELOPMENT.md)
+      - uses: actions/checkout@v5.0.0
+        with:
+          persist-credentials: false
+      - name: Run the tests on the same Python the image uses
+        run: |
+          base="$(sed -n 's/^FROM //p' Dockerfile | head -n 1)"
+          docker run --rm -v "$PWD":/src -w /src -e PYTHONDONTWRITEBYTECODE=1 "$base" \
+            sh -c "pip install -q --no-cache-dir --root-user-action=ignore -r requirements.txt pytest httpx && python -m pytest -q -p no:cacheprovider"
+      - name: Run the browser tests in Chrome (already on GitHub's build machines)
+        env:
+          REQUIRE_BROWSER: "1"
+        run: |
+          python3 -m venv "$RUNNER_TEMP/bt"
+          "$RUNNER_TEMP/bt/bin/pip" install -q --disable-pip-version-check -r requirements.txt pytest httpx playwright
+          command -v google-chrome >/dev/null || "$RUNNER_TEMP/bt/bin/python" -m playwright install --with-deps chromium
+          PYTHONDONTWRITEBYTECODE=1 "$RUNNER_TEMP/bt/bin/python" -m pytest -q -p no:cacheprovider tests/test_browser.py
