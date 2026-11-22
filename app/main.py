@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__, auth, security, config, db, engine
-from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, SpotifyNoDevice, album_key, owned_track, special_release, artist_key, artist_source, credit_keys, song_key, song_keys, tracks_owned as _tracks_owned, owns_every_track as _owns_every_track,
+from .clients import (UA, APIError, Deezer, LastFM, LASTFM_PRO_NOTE, Lidarr, Plex, Spotify, SpotifyNoDevice, album_key, owned_track, special_release, artist_key, artist_source, credit_keys, original_date, song_key, song_keys, tracks_owned as _tracks_owned, owns_every_track as _owns_every_track,
                       listenbrainz_top_artists, parse_spotify_export, parse_youtube_music, spotify_auth_url, spotify_exchange, spotify_pasted, spotify_redirect,
                       SPOTIFY_HELPER, SPOTIFY_LOOPBACK)
 from .sync import Syncer, friendly_error
@@ -507,14 +507,64 @@ def liked_playlist():
 def _gap_groups():
     """Albums you're missing, by artist, as your settings want them: studio albums, plus EPs and remix, instrumental,
     live or acoustic releases if you've asked for those. Older syncs only kept studio albums, which still works."""
-    out, lib = [], db.library_map()
+    out, lib, songs = [], db.library_map(), db.get_meta("plex_songs")
     for g in (db.get_meta("gaps") or {}).get("groups", []):
         owned = (lib.get(g["key"]) or {}).get("albums", [])   # checked here too, so older syncs get the newer rules
         special = lambda a: a.get("special") or special_release(a.get("title"), owned)   # noqa: E731
         keep = [a for a in g["albums"] if (a.get("type") != "ep" or config.GAPS_EPS) and (not special(a) or config.GAPS_SPECIAL)]
+        have = [a for a in keep if a.get("id") and _owns_every_track(db.cache_get(f"dzalb:{a['id']}", 30), g["name"], a["title"], songs)]
+        keep = [a for a in keep if a not in have]   # every track turned up in Plex: not missing after all
         if keep:
-            out.append({**g, "albums": keep[:12], "total": g["owned"] + len(keep)})
+            out.append({**g, "albums": keep[:12], "owned": g["owned"] + len(have), "total": g["owned"] + len(have) + len(keep)})
     return out
+
+
+@app.get("/api/matching-report")
+def matching_report(limit: int = 150):
+    """Where matching between Plex and Deezer/Spotify is shaky, from data already stored (no lookups): albums you
+    nearly have, albums owned by name whose tracks don't all match, and liked songs with a close title in Plex.
+    For finding matching rules that need work; open it and share the result."""
+    import difflib
+    songs = db.get_meta("plex_songs") or {}
+    by_artist = {}
+    for k in songs:
+        if not k.startswith("album:"):
+            a, _, s = k.partition("|")
+            by_artist.setdefault(a, set()).add(s)
+
+    def close(artist_keys, sk):
+        pool = set().union(*(by_artist.get(a, set()) for a in artist_keys)) if artist_keys else set()
+        return difflib.get_close_matches(sk, list(pool), n=2, cutoff=0.75)
+
+    nearly, by_name = [], []
+    for key, row in db.library_map().items():
+        dz = db.cache_get("dz:" + key) or {}
+        owned = {album_key(t) for t in row.get("albums", [])}
+        for al in dz.get("albums", []):
+            tracks = db.cache_get(f"dzalb:{al.get('id')}")
+            if not tracks:
+                continue
+            have = _tracks_owned(tracks, row["name"], al.get("title"), songs)
+            n, got = len(have), sum(have)
+            entry = {"artist": row["name"], "album": al.get("title"), "tracks": f"{got}/{n}",
+                     "unmatched": [{"title": t.get("title"), "closest_in_plex": close(credit_keys(row["name"]), next(iter(song_keys(t.get("title"))), ""))}
+                                   for t, h in zip(tracks, have) if not h][:8]}
+            if album_key(al.get("title")) in owned and got < n:
+                by_name.append(entry)
+            elif n >= 3 and 0.6 <= got / n < 1:
+                nearly.append(entry)
+    liked_close = []
+    for t in db.get_meta("spotify_liked") or []:
+        if owned_track(t, songs):
+            continue
+        aks = set().union(*(credit_keys(c) for c in (t.get("artists") or []) + [t.get("album_artist") or ""]))
+        hits = close(aks, next(iter(song_keys(t.get("title"))), ""))
+        if hits:
+            liked_close.append({"song": t.get("title"), "artist": ", ".join(t.get("artists") or []), "closest_in_plex": hits})
+    return _fast({"albums_nearly_complete": nearly[:limit], "owned_by_name_but_tracks_differ": by_name[:limit],
+                  "liked_songs_with_a_close_title_in_plex": liked_close[:limit],
+                  "counts": {"albums_nearly_complete": len(nearly), "owned_by_name_but_tracks_differ": len(by_name),
+                             "liked_songs_with_a_close_title_in_plex": len(liked_close), "plex_song_keys": len(songs)}})
 
 
 @app.get("/api/gaps")
@@ -578,6 +628,20 @@ def album_tracks(album_id: int, name: str = "", album: str = ""):
         keys = {f"{ak}|{sk}" for sk in song_keys(t.get("title")) for ak in credit_keys(name) | credit_keys(t.get("artist") or "")}
         out.append({**t, "owned": have, "liked": bool(keys & liked)})
     return {"tracks": out, "checked_plex": songs is not None, "all_owned": len(out) >= 2 and all(t["owned"] for t in out)}
+
+
+def _release_groups(key, mbid):
+    """An artist's MusicBrainz albums and EPs with their first release dates. The sync keeps these for your top
+    artists; anyone else is looked up once (MusicBrainz allows one request a second) and kept for a month."""
+    hit = db.cache_get("mbrg:" + key, 30)
+    if hit is None and mbid:
+        try:
+            hit = OpenArtists(_dz).release_groups(mbid)
+            db.cache_put("mbrg:" + key, hit)
+            db.commit()
+        except Exception as e:
+            log.warning("MusicBrainz albums for %s: %s", key, e)
+    return hit or []
 
 
 @app.get("/api/art/{key}")
@@ -650,6 +714,9 @@ def artist(key: str, name: str = ""):
         if not owned and has_songs:   # every track is in Plex, filed under other album names or another album artist
             owned = _owns_every_track(db.cache_get(f"dzalb:{a['id']}", 30), nm, a["title"], songs)
         albums.append({**a, "owned": owned, "plex_rk": plex_rk.get(ak)})
+    groups = _release_groups(key, info.get("mbid") or (lib or {}).get("mbid"))
+    for a in albums:
+        a["date"] = original_date(a, groups)
     albums.sort(key=lambda a: a.get("date") or "", reverse=True)
     fb = db.feedback().get(key)
     out = {

@@ -10,7 +10,7 @@ from datetime import date, timedelta
 import requests
 
 from . import config, db, engine
-from .clients import (APIError, Deezer, LastFM, Lidarr, OpenArtists, Plex, Spotify, album_key, artist_key, artist_source, forget_lastfm_check, owned_track, owns_every_track, same_song, special_release,
+from .clients import (APIError, Deezer, LastFM, Lidarr, OpenArtists, Plex, Spotify, album_key, artist_key, artist_source, forget_lastfm_check, original_date, owned_track, owns_every_track, same_song, special_release,
                       listenbrainz_top_artists)
 
 log = logging.getLogger("recordhound")
@@ -410,6 +410,23 @@ class Syncer:
         today = date.today()
         recent = (today - timedelta(days=120)).isoformat()
         gaps, releases = [], []
+        songs, fetches = db.get_meta("plex_songs"), [600]   # at most 600 new track lists per sync; the rest next time
+        dz = self.deezer_factory() if self.sources is None else None
+
+        def every_track(x, artist):
+            """True when Plex has every track of this album, filed under any album name or album artist."""
+            if not songs or not x.get("id"):
+                return False
+            tracks = db.cache_get(f"dzalb:{x['id']}", 30)
+            if tracks is None and dz and fetches[0] > 0:
+                fetches[0] -= 1
+                try:
+                    tracks = dz.album_tracks(x["id"])
+                    db.cache_put(f"dzalb:{x['id']}", tracks)
+                    db.commit()
+                except Exception as e:
+                    log.warning("Track list for %s: %s", x.get("title"), e)
+            return owns_every_track(tracks, artist, x.get("title"), songs)
         songs = db.get_meta("plex_songs")
         for k in top:
             a = found.get(k) or {}
@@ -419,6 +436,7 @@ class Syncer:
             seen = {}   # album key -> release date
             albums = []
             for al in a.get("albums", []):
+                al = {**al, "date": original_date(al, mbrg.get(k))}   # a reissue isn't a new release
                 ak = album_key(al["title"])
                 if ak in seen or al.get("type") not in ("album", "ep") or _same_album(ak, al.get("date"), seen):
                     continue
@@ -439,7 +457,9 @@ class Syncer:
             if k in lib and not a.get("missing"):
                 missing = [{**x, "special": special_release(x["title"], (lib.get(k) or {}).get("albums", []))} for x in albums
                            if not x.get("mb_only") and not x["owned"] and (x.get("date") or "9") <= today.isoformat()]
-                n_own = len([x for x in albums if x["owned"]])
+                have = [x for x in missing if every_track(x, seeds[k]["name"])]
+                missing = [x for x in missing if x not in have]
+                n_own = len([x for x in albums if x["owned"]]) + len(have)
                 if missing and n_own:   # EPs and special releases are kept, marked; the page filters by your settings
                     missing.sort(key=lambda x: -(x.get("fans") or 0))
                     gaps.append({"key": k, "name": seeds[k]["name"], "picture": a.get("thumb"), "owned": n_own, "albums": missing[:30]})

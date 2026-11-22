@@ -576,3 +576,76 @@ def test_compilations_and_reissues_count_as_special_releases():
     owned = ["OK Computer (Deluxe)", "Kid A"]
     assert special_release("OK Computer OKNOTOK 1997 2017", owned) and special_release("KID A MNESIA", owned)
     assert not special_release("Kid A", owned) and not special_release("Amnesiac", owned) and not special_release("OK Computer OKNOTOK")
+
+
+def test_a_different_mix_is_not_the_album_you_own():
+    from app.clients import owns_every_track, special_release
+    songs = {f"marvingaye|{k}": "1" for k in ("whatsgoingon", "whatshappeningbrother", "mercymercyme")}
+    original = [{"title": "What's Going On"}, {"title": "What's Happening Brother"}, {"title": "Mercy Mercy Me (The Ecology)"}]
+    detroit = [{"title": t["title"] + " (Detroit Mix)"} for t in original]
+    assert owns_every_track(original, "Marvin Gaye", "What's Going On", songs)
+    assert not owns_every_track(detroit, "Marvin Gaye", "What's Going On: The Detroit Mix", songs)
+    assert not owns_every_track(original, "Marvin Gaye", "What's Going On: The Detroit Mix", songs)   # the album says it's a mix
+    assert owns_every_track(original, "Marvin Gaye", "What's Going On (Deluxe Edition)", songs)        # a deluxe edition still counts
+    assert special_release("What's Going On: The Detroit Mix") and special_release("Songs - 2021 Mix")
+    assert not special_release("Mixed Emotions") and not special_release("Mix Tape")
+
+
+def test_albums_show_their_original_year_not_the_reissue():
+    from app.clients import original_date
+    groups = [{"title": "What's Going On", "date": "1971-05-21"}, {"title": "Let's Get It On", "date": "1973-08-28"},
+              {"title": "Marvin Gaye Live!", "date": "1974-06"}]
+    assert original_date({"title": "What's Going On", "date": "2020-01-01"}, groups) == "1971-05-21"
+    assert original_date({"title": "Let's Get It On (Deluxe Edition)", "date": "2023-03-01"}, groups) == "1973-08-28"
+    assert original_date({"title": "Marvin Gaye Live!", "date": "2025-01-01"}, groups) == "1974-06"
+    assert original_date({"title": "The Very Best Of Marvin Gaye", "date": "2018-01-01"}, groups) == "2018-01-01"   # no original to go by
+    assert original_date({"title": "Brand New", "date": "2026-03-01"}, groups + [{"title": "Brand New", "date": "2026-03-01"}]) == "2026-03-01"
+    assert original_date({"title": "What's Going On", "date": "2020-01-01"}, None) == "2020-01-01"   # nothing known yet
+
+
+def test_albums_you_have_every_track_of_leave_albums_youre_missing(client):
+    c, m = client
+    db.set_meta("plex_songs", {"pmdawn|intro": "1", "pmdawn|plastic": "2"})
+    db.cache_put("dzalb:801", [{"title": "Intro"}, {"title": "Plastic"}])
+    db.commit()
+    db.set_meta("gaps", {"at": 1, "groups": [{"key": "pmdawn", "name": "P.M. Dawn", "owned": 1, "albums": [
+        {"id": 801, "title": "The Bliss Album...?", "type": "album", "fans": 9}, {"id": 802, "title": "Jesus Wept", "type": "album", "fans": 5}]}]})
+    g = c.get("/api/gaps").json()["groups"][0]
+    assert [a["title"] for a in g["albums"]] == ["Jesus Wept"] and g["owned"] == 2 and g["total"] == 3
+    db.set_meta("gaps", None)
+    db.conn().execute("DELETE FROM cache WHERE k='dzalb:801'")
+    db.commit()
+
+
+def test_matching_report_points_at_near_misses(client):
+    c, m = client
+    keep = db.get_meta("plex_songs")
+    lib = next(iter(db.library_map().values()), None)
+    if lib is None:
+        return
+    k = lib["key"]
+    db.set_meta("plex_songs", {f"{k}|intro": "1", f"{k}|breakthru": "2", f"{k}|outro": "3", f"{k}|lovesong": "4"})
+    db.cache_put("dz:" + k, {"id": 1, "albums": [{"id": 901, "title": "Report Album", "type": "album"}]})
+    db.cache_put("dzalb:901", [{"title": "Intro"}, {"title": "Break Through"}, {"title": "Outro"}, {"title": "Love Song"}])
+    db.set_meta("spotify_liked", [{"title": "Love Songs", "artists": [lib["name"]], "album": "X"}])
+    db.commit()
+    try:
+        d = c.get("/api/matching-report").json()
+        al = next(a for a in d["albums_nearly_complete"] if a["album"] == "Report Album")
+        assert al["tracks"] == "3/4" and al["unmatched"][0]["title"] == "Break Through" and "breakthru" in al["unmatched"][0]["closest_in_plex"]
+        assert d["liked_songs_with_a_close_title_in_plex"][0]["closest_in_plex"] == ["lovesong"]
+    finally:
+        db.set_meta("plex_songs", keep)
+        db.conn().execute("DELETE FROM cache WHERE k IN (?, 'dzalb:901')", ("dz:" + k,))
+        db.set_meta("spotify_liked", LIKED)
+        db.commit()
+
+
+def test_numbered_titles_match_however_they_are_written():
+    from app.clients import same_song
+    assert same_song("Shine On You Crazy Diamond (Pts. I-V)", "Shine On You Crazy Diamond")
+    assert same_song("Another Brick in the Wall, Pt. 2", "Another Brick in the Wall (Part II)")
+    assert same_song("Symphony No. 9", "Symphony Number 9")
+    assert same_song("Vol. 3", "Volume III")
+    assert not same_song("Another Brick in the Wall, Pt. 1", "Another Brick in the Wall, Pt. 2")
+    assert not same_song("I Will", "Will")

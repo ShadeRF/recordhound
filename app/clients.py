@@ -67,7 +67,7 @@ def album_key(title):
 # Compilations and rarities too: "Greatest Hits", "The Best of", "B-Sides & Rarities", "Anthology", "The Singles".
 _SPECIAL_RELEASE = re.compile(r"\b(remix(es|ed)?|rmx|instrumentals?|acoustic|karaoke|demos?|a ?cappella|unplugged|reimagined"
                               r"|rarities|rare tracks|b[- ]?sides|best of|greatest hits|anthology|essentials?|collection|singles)\b"
-                              r"|[(\[\-–]\s*live\b|\blive (at|in|from)\b", re.I)
+                              r"|[(\[\-–:]\s*live\b|\blive (at|in|from)\b|[(\[\-–:].*\bmix(es)?\b", re.I)   # "…: The Detroit Mix"
 
 
 def _words(title):
@@ -97,10 +97,24 @@ def song_key(title):
     return re.sub(r"[^a-z0-9]+", "", cut) or re.sub(r"[^a-z0-9]+", "", s) or (title or "").strip().lower()
 
 
+_ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10}
+_NUMBERED = re.compile(r"\b(part|pt|vol|volume|chapter|ch|no|number|op)\.?\s*(\d+|[ivx]+)\b", re.I)
+
+
+def _numbered(title):
+    """Numbering written one way: "Pt. II", "Part 2" and "part 2" all become "part 2"."""
+    def one(m):
+        word, n = m.group(1).lower(), m.group(2).lower()
+        word = {"pt": "part", "vol": "volume", "ch": "chapter", "number": "no"}.get(word, word)
+        return f"{word} {_ROMAN.get(n, n)}"
+    return _NUMBERED.sub(one, title or "")
+
+
 @functools.lru_cache(maxsize=200_000)
 def song_keys(title):
     """Every way to read a title. Brackets can be a version label ("Song (Live)" is "Song") or part of the name
     ("About Nothing (For the Love of Destiny)" is "About Nothing for the Love of Destiny"), so both readings count."""
+    title = _numbered(title)   # "Pt. II" and "Part 2" are the same
     s = unicodedata.normalize("NFKD", (title or "").translate(_PLAIN)).encode("ascii", "ignore").decode().lower()
     whole = re.sub(r"\s+-\s+.*$", "", s)
     whole = re.sub(r"[\(\[]\s*(?:feat|ft|featuring|with)\.?\s[^\)\]]*[\)\]]", "", whole)   # "(feat. X)" is never part of the name
@@ -142,7 +156,7 @@ def lead_artist(credit):
 
 # "Song (Instrumental)", "Song - Live at Wembley", "Album (Remixes)": a different recording from the one you own, even
 # though the forgiving song match would call it the same song.
-_VERSION = re.compile(r"[(\[\-–].*\b(instrumentals?|remix(es)?|live|acoustic|karaoke|demos?|a ?cappella)\b", re.I)
+_VERSION = re.compile(r"[(\[\-–:].*\b(instrumentals?|remix(es)?|mix(es)?|live|acoustic|karaoke|demos?|a ?cappella)\b", re.I)
 
 
 def tracks_owned(tracks, artist, album_title, songs):
@@ -164,6 +178,18 @@ def tracks_owned(tracks, artist, album_title, songs):
 def owns_every_track(tracks, artist, album_title, songs):
     have = tracks_owned(tracks or [], artist, album_title, songs)
     return len(have) >= 2 and all(have)
+
+
+def original_date(album, groups):
+    """The album's first release date from MusicBrainz release groups when it's earlier than the date given
+    (Deezer often dates an album by its latest reissue: What's Going On as 2020, not 1971)."""
+    first = {}
+    for g in groups or []:
+        k, d = album_key(g.get("title")), g.get("date") or ""
+        if k and len(d) >= 4 and (k not in first or d < first[k]):
+            first[k] = d
+    d = first.get(album_key(album.get("title")))
+    return d if d and d[:4] < (album.get("date") or "9999")[:4] else album.get("date")
 
 
 def owned_track(t, songs):
