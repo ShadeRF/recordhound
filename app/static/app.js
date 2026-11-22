@@ -1220,14 +1220,14 @@ function renderSettings() {
       ${rangeField("RECENT_WEIGHT", "What you've played lately", 0, 1.5, 0.1, "Extra pull for artists you've played in the last six months (Plex, plus ListenBrainz if connected). Raise it to follow what you're into now; 0 treats all listening the same.", pct)}
       ${rangeField("MIN_PLAYS", "Plays before outside listening counts", 1, 20, 1, "Artists you've played fewer times than this in your Spotify history file, YouTube Music, ListenBrainz or Last.fm don't shape your picks or show up under You Stream. Plays in Plex and your connected Spotify account always count.")}
       <h4>Don't learn from</h4>
-      <p class="sub">Tick anything that shouldn't shape your picks. It stays in your library.</p>
+      <p class="sub">Tick anything that shouldn't shape your picks. It stays in your library and still counts as owned.</p>
       <p class="ns-sum" id="nsSum">${nsSummary()}</p>
       <div class="field"><label>Libraries to leave out</label><div id="noseedLibs" class="chips pick"><span class="muted">Sync once to list your libraries.</span></div></div>
       <div class="field"><label>Albums to leave out</label><div><div class="chips pick"><button type="button" data-nocomp class="${val("COMP_TASTE") ? "" : "on"}">Soundtracks &amp; compilations</button></div>
         <div class="help">Albums credited to Various Artists, Original Soundtrack and the like. Normally a song you play from one counts for the artist who sang it.</div></div></div>
       <div class="field"><label>Genres to leave out</label><div><div class="chips pick">${NOSEED_TAG_LIST.map(t => `<button type="button" data-nst="${esc(t)}" class="${(val("NOSEED_TAGS") || []).includes(t) ? "on" : ""}">${esc(t)}</button>`).join("")}</div>
         <div class="help">Artists tagged with these, wherever their albums are. "soundtrack" covers score composers like John Williams and Hans Zimmer.</div></div></div>
-      <div class="field"><label>Artists left out</label><div id="noseedArtists"><span class="muted">None. Open any artist you own and tick <b>Don't learn from this artist</b>.</span></div></div>
+      <div class="field"><label>Artists left out</label><div id="noseedArtists"><span class="muted">None yet. Open any artist you own and tick <b>Don't learn from this artist</b>.</span></div></div>
     </div>`, "Star ratings count most, then how much you play an artist anywhere, then what you own. These settings adjust the rest.")],
     ["picks", "Picks", setSection("picks", "Picks", `<div class="scard">
       ${lastStatus.artist_source === "lastfm"
