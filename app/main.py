@@ -411,15 +411,16 @@ def liked():
             out["owned"] += 1
             continue
         gid = t.get("album_id") or f"{t.get('album')}|{t.get('album_artist')}"
-        if gid in hidden:
+        if gid in hidden or t.get("id") in hidden:   # a whole release, or just this song
             out["hidden"] += 1
             continue
         artist = t.get("album_artist") or (t.get("artists") or [""])[0]
         g = groups.setdefault(gid, {"id": gid, "title": t.get("album"), "artist": artist, "artist_key": artist_key(artist),
                                     "cover": t.get("cover"), "year": t.get("year"), "type": t.get("album_type"),
-                                    "added_at": t.get("added_at"), "songs": [], "requested": gid in added,
+                                    "added_at": t.get("added_at"), "songs": [], "tracks": [], "requested": gid in added,
                                     "artist_in_lidarr": artist_key(artist) in lidarr})
         g["songs"].append(t.get("title"))
+        g["tracks"].append({"id": t.get("id"), "title": t.get("title"), "added_at": t.get("added_at")})
     out["total"] = len(tracks)
     out["albums"] = sorted(groups.values(), key=lambda g: g["added_at"] or "", reverse=True)   # newest like first
     return _fast(out)

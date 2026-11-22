@@ -515,7 +515,7 @@ def test_liked_not_owned_lists_missing_songs_and_hides_albums(page, monkeypatch)
         rows = page.locator(".lk-row")
         assert rows.count() == 2 and "Isabelle" in rows.first.inner_text()
         assert "2 songs of the 3 you've liked" in view(page).inner_text()
-        rows.first.locator(".lk-songs").click()   # anywhere on the row opens the artist
+        rows.first.locator(".lk-main").click()   # anywhere on the row opens the artist
         page.wait_for_selector("#drawer h2")
         assert page.locator("#drawer h2").inner_text() == "Whitney Whitney"
         page.keyboard.press("Escape")
@@ -620,9 +620,18 @@ def test_liked_not_owned_sorts_groups_and_filters(page, monkeypatch):
     titles = lambda: page.locator(".lk-row .lk-t").all_inner_texts()
     try:
         go(page, "liked")
-        page.evaluate("localStorage.removeItem('likedView')")
+        page.evaluate("localStorage.removeItem('likedView2')")
         page.reload(); settle(page)
-        assert titles() == ["Isabelle", "Feels So Far Away", "A Man Written", "A River's Invitation"]   # newest like first
+        # one row per song by default, newest like first
+        assert titles() == ["Isabelle", "Feels So Far Away", "A Man Written by a Woman", "Lead Me Home"]
+        assert page.locator("[data-lk-group=none].on").count() == 1 and "♥" in page.locator(".lk-row").first.inner_text()
+        page.evaluate("liked.albums[0].tracks[0].id = '4uLU6hMCjMI75M1A2tKUQC'; renderLikedList()")   # a real-looking Spotify id
+        assert page.locator(".lk-row").first.locator(".lk-sp").get_attribute("href") == "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"
+        page.select_option("#lkSort", "artist")
+        assert titles() == ["Feels So Far Away", "Lead Me Home", "Isabelle", "A Man Written by a Woman"]
+        page.select_option("#lkSort", "new")
+        page.click("[data-lk-group=album]")   # one row per release
+        assert titles() == ["Isabelle", "Feels So Far Away", "A Man Written", "A River's Invitation"]
         page.select_option("#lkSort", "artist")
         assert titles() == ["Feels So Far Away", "A River's Invitation", "Isabelle", "A Man Written"]   # "The" is ignored
         page.select_option("#lkSort", "year")
@@ -641,6 +650,6 @@ def test_liked_not_owned_sorts_groups_and_filters(page, monkeypatch):
         page.reload(); settle(page)   # the choices are remembered
         assert page.locator("#lkSort").input_value() == "year" and page.locator("[data-lk-group=artist].on").count() == 1
     finally:
-        page.evaluate("localStorage.removeItem('likedView')")
+        page.evaluate("localStorage.removeItem('likedView2')")
         for k in ("spotify_liked", "plex_songs"):
             db.set_meta(k, None)

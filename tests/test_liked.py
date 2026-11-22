@@ -312,3 +312,12 @@ def test_styled_names_and_two_spellings_of_one_artist():
     assert len(rows) == 1 and rows[0]["key"] == "chvrches" and rows[0]["plays"] == 7
     assert sorted(rows[0]["albums"]) == ["Every Open Eye", "The Bones Of What You Believe"]
     assert plex.songs["chvrches|themotherweshare"] == "t3"
+
+
+def test_hiding_one_song_keeps_the_rest_of_its_album(client):
+    c, _ = client
+    c.post("/api/liked/hide", json={"id": "al4Idioteque"})   # a song's own id
+    d = c.get("/api/liked").json()
+    kid_a = next(a for a in d["albums"] if a["id"] == "al4")
+    assert kid_a["songs"] == ["Everything In Its Right Place"] and d["hidden"] == 1
+    assert [t["title"] for t in kid_a["tracks"]] == ["Everything In Its Right Place"] and kid_a["tracks"][0]["added_at"]
