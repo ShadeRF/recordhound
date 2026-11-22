@@ -604,8 +604,7 @@ async function loadHome() {
     </div>`).join("");
 }
 $("homeRows").addEventListener("click", e => {
-  const b = e.target.closest(".scroll-btn");
-  if (b) { const sc = b.parentElement.querySelector(".hscroll"); sc.scrollBy({ left: (b.classList.contains("l") ? -1 : 1) * sc.clientWidth * 0.85, behavior: "smooth" }); return; }
+  if (e.target.closest(".scroll-btn")) return;   // handled for every page below
   const a = e.target.closest("[data-see]");
   if (a) { e.preventDefault(); const s = JSON.parse(a.dataset.see); s.view ? go(s.view) : drill(s); }
 });
@@ -667,7 +666,7 @@ async function loadGaps() {
     d.groups.length ? d.groups.map(g => `<div class="gap"><div class="gap-head" data-open-artist="${esc(g.key)}">
         <span class="gap-ph" style="background-image:url('${esc(g.picture || "")}')"></span>
         <div><h3>${esc(g.name)}</h3><div class="muted">You have ${g.owned} of ${g.total}</div><div class="meter"><i style="width:${Math.round(g.owned / g.total * 100)}%"></i></div></div></div>
-        <div class="hscroll" data-list>${g.albums.map(a => albumCard(a)).join("")}</div></div>`).join("")
+        <div class="hwrap"><button class="scroll-btn l" aria-label="Scroll left">${ICON.left}</button><div class="hscroll" data-list>${g.albums.map(a => albumCard(a)).join("")}</div><button class="scroll-btn r" aria-label="Scroll right">${ICON.right}</button></div></div>`).join("")
       : `<div class="empty">${d.at ? "Nothing missing. Your collection is complete." : "This fills in after your next full sync."}</div>`, opts);
   document.querySelectorAll("[data-gap-opt]").forEach(cb => cb.onchange = async () => {
     try { await api("/api/settings", { method: "PUT", body: JSON.stringify({ [cb.dataset.gapOpt]: cb.checked }) }); } catch (e) { toast(e.message); cb.checked = !cb.checked; return; }
@@ -1806,3 +1805,8 @@ $("sync").onclick = async () => { try { await api("/api/sync", { method: "POST" 
   if (lastStatus.configured === false) location.hash = "#/setup";
   route(); poll();
 })();
+// row arrows, on every page that has scrolling rows
+document.addEventListener("click", e => {
+  const b = e.target.closest && e.target.closest(".scroll-btn"); if (!b) return;
+  const sc = b.parentElement.querySelector(".hscroll"); sc.scrollBy({ left: (b.classList.contains("l") ? -1 : 1) * sc.clientWidth * 0.85, behavior: "smooth" });
+});

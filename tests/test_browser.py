@@ -1085,3 +1085,18 @@ def test_albums_by_an_artist_filed_under_someone_else_in_plex_still_show_owned(p
             db.conn().execute("INSERT INTO cache(k, json, at) VALUES (?, ?, ?)", ("dz:" + k, before[0], before[1]))
         db.set_meta("plex_songs", keep)
         db.commit()
+
+
+def test_album_rows_on_the_missing_albums_page_have_arrows(page):
+    from app import db
+    keep = db.get_meta("gaps")
+    db.set_meta("gaps", {"at": 1, "groups": [{"key": "x", "name": "Prolific Band", "owned": 3,
+                        "albums": [{"title": f"Album {i}", "type": "album", "fans": 1} for i in range(20)]}]})
+    try:
+        go(page, "gaps")
+        row = page.locator("#listBody .hwrap").first
+        row.hover()
+        row.locator(".scroll-btn.r").click()
+        page.wait_for_function("document.querySelector('#listBody .hscroll').scrollLeft > 0")
+    finally:
+        db.set_meta("gaps", keep)
