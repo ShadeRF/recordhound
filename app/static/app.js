@@ -663,15 +663,23 @@ async function loadGaps() {
   const opts = `<div class="lib-tools gap-opts"><label class="inline"><input type="checkbox" data-gap-opt="GAPS_EPS" ${d.eps ? "checked" : ""}> EPs</label>
     <label class="inline"><input type="checkbox" data-gap-opt="GAPS_SPECIAL" ${d.special ? "checked" : ""}> Remixes, live albums, compilations and reissues</label></div>`;
   listShell("Albums you're missing", `${what.length > 1 ? what.slice(0, -1).join(", ") + " and " + what.at(-1) : "Albums"} from artists you already collect, most popular first.`.replace(/^./, c => c.toUpperCase()),
-    d.groups.length ? `<div class="gaps">${d.groups.map(g => `<div class="gap${g.albums.length <= 3 ? " few" : ""}"><div class="gap-head" data-open-artist="${esc(g.key)}">
+    d.groups.length ? gapSections(d.groups, g => g.albums.length, (g, few) => `<div class="gap${few ? " few" : ""}" style="--n:${g.albums.length}"><div class="gap-head" data-open-artist="${esc(g.key)}">
         <span class="gap-ph" style="background-image:url('${esc(g.picture || "")}')"></span>
         <div><h3>${esc(g.name)}</h3><div class="muted">You have ${g.owned} of ${g.total}</div><div class="meter"><i style="width:${Math.round(g.owned / g.total * 100)}%"></i></div></div></div>
-        <div class="hwrap"><button class="scroll-btn l" aria-label="Scroll left">${ICON.left}</button><div class="hscroll" data-list>${g.albums.map(a => albumCard(a)).join("")}</div><button class="scroll-btn r" aria-label="Scroll right">${ICON.right}</button></div></div>`).join("")}</div>`
+        <div class="hwrap"><button class="scroll-btn l" aria-label="Scroll left">${ICON.left}</button><div class="hscroll" data-list>${g.albums.map(a => albumCard(a)).join("")}</div><button class="scroll-btn r" aria-label="Scroll right">${ICON.right}</button></div></div>`)
       : `<div class="empty">${d.at ? "Nothing missing. Your collection is complete." : "This fills in after your next full sync."}</div>`, opts);
   document.querySelectorAll("[data-gap-opt]").forEach(cb => cb.onchange = async () => {
     try { await api("/api/settings", { method: "PUT", body: JSON.stringify({ [cb.dataset.gapOpt]: cb.checked }) }); } catch (e) { toast(e.message); cb.checked = !cb.checked; return; }
     loadGaps();
   });
+}
+// Groups missing 5 or fewer sit side by side under "Almost complete", each only as wide as its posters;
+// bigger ones get full-width rows under "More to find". Headings only when both are there.
+const GAP_FEW = 5;
+function gapSections(groups, count, one) {
+  const few = groups.filter(g => count(g) <= GAP_FEW), many = groups.filter(g => count(g) > GAP_FEW), both = few.length && many.length;
+  return (few.length ? `${both ? `<h3 class="gap-sec">Almost complete</h3>` : ""}<div class="gaps">${few.map(g => one(g, true)).join("")}</div>` : "")
+    + (many.length ? `${both ? `<h3 class="gap-sec">More to find</h3>` : ""}<div class="gaps">${many.map(g => one(g, false)).join("")}</div>` : "");
 }
 async function loadReleases() {
   listShell("New from artists you love", "", `<div class="grid">${skeleton(8)}</div>`);
