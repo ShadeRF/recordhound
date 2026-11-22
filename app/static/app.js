@@ -200,7 +200,7 @@ document.addEventListener("click", e => {
     openArtist(c.dataset.key, c.dataset.name || (REG.get(c.dataset.key) || {}).name);
   }
 });
-document.addEventListener("keydown", e => { if (e.key === "Enter" && (e.target.classList?.contains("card") || e.target.classList?.contains("lk-row"))) e.target.click(); });
+document.addEventListener("keydown", e => { if (e.key === "Enter" && (e.target.classList?.contains("card") || e.target.classList?.contains("lk-row") || e.target.classList?.contains("lk-ahead"))) e.target.click(); });
 async function rateArtist(rating) {
   const r = current; if (!r) return;
   try { await api("/api/rate", { method: "POST", body: JSON.stringify({ key: r.key, name: r.name, rating }) }); } catch (e) { toast(e.message); return; }
@@ -641,14 +641,44 @@ async function loadLibrary(more, typing) {
 }
 
 // ------------------------------------------------------------------ liked, not owned (Spotify Liked Songs that aren't in Plex)
-let liked = null, likedShown = 0, likedObs = null;
+let liked = null, likedShown = 0, likedObs = null, likedQ = "", likedTimer = null;
+// Sort and group choices, remembered in this browser
+let LK = { sort: "new", group: "album" };
+try { LK = { ...LK, ...JSON.parse(store.get("likedView") || "{}") }; } catch {}
+const bare = s => (s || "").toLowerCase().replace(/^the\s+/, "");
+const byNew = (a, b) => (b.added_at || "").localeCompare(a.added_at || "");
+const LK_SORTS = {
+  new: ["Newest like", byNew],
+  old: ["Oldest like", (a, b) => (a.added_at || "").localeCompare(b.added_at || "")],
+  artist: ["Artist A–Z", (a, b) => bare(a.artist).localeCompare(bare(b.artist)) || byNew(a, b)],
+  album: ["Album A–Z", (a, b) => bare(a.title).localeCompare(bare(b.title)) || byNew(a, b)],
+  songs: ["Most liked songs", (a, b) => b.songs.length - a.songs.length || byNew(a, b)],
+  year: ["Newest release", (a, b) => (b.year || "").localeCompare(a.year || "") || byNew(a, b)],
+};
+function likedItems() {
+  const q = likedQ.toLowerCase(), cmp = (LK_SORTS[LK.sort] || LK_SORTS.new)[1];
+  const albums = liked.albums.filter(a => !q || [a.title, a.artist, ...a.songs].some(s => (s || "").toLowerCase().includes(q)));
+  if (LK.group !== "artist") return { count: albums.length, items: albums.sort(cmp).map(a => ({ a })) };
+  const groups = new Map();
+  for (const a of albums) {
+    if (!groups.has(a.artist_key)) groups.set(a.artist_key, { artist: a.artist, artist_key: a.artist_key, title: a.artist, albums: [], songs: [], added_at: "", year: "" });
+    const g = groups.get(a.artist_key);
+    g.albums.push(a); g.songs.push(...a.songs);
+    if ((a.added_at || "") > g.added_at) g.added_at = a.added_at;
+    if ((a.year || "") > g.year) g.year = a.year;
+  }
+  const outer = LK.sort === "album" ? LK_SORTS.artist[1] : cmp, inner = ["album", "year", "old"].includes(LK.sort) ? cmp : byNew;
+  return { count: albums.length, items: [...groups.values()].sort(outer).flatMap(g => [{ head: g }, ...g.albums.sort(inner).map(a => ({ a }))]) };
+}
+const likedHead = g => `<div class="lk-ahead" data-lk-head="${esc(g.artist_key)}" data-name="${esc(g.artist)}" tabindex="0" title="Open ${esc(g.artist)}">
+  <b>${esc(g.artist)}</b><small>${g.songs.length} song${g.songs.length === 1 ? "" : "s"}${g.albums.length > 1 ? ` · ${g.albums.length} releases` : ""}</small></div>`;
+const likedItem = x => x.head ? likedHead(x.head) : likedRow(x.a);
 const LIKED_PAGE = 60;
 const streamSwitch = on => `<div class="seg stream-seg" role="tablist">${[["stream", "Artists"], ["liked", "Liked songs"]].map(([v, l]) =>
   `<button role="tab" data-go="${v}" aria-selected="${v === on}" class="${v === on ? "on" : ""}">${l}</button>`).join("")}</div>`;
 document.addEventListener("click", e => { const b = e.target.closest("[data-go]"); if (b && !b.classList.contains("on")) go(b.dataset.go); });
 const LIKED_TITLE = "Liked, not owned";
 async function loadLiked() {
-  likedShown = LIKED_PAGE;
   listShell(LIKED_TITLE, "", `<div class="shimmer" style="height:300px;border-radius:12px"></div>`);
   const my = ++listSeq; let d; try { d = await api("/api/liked"); } catch (e) { if (my === listSeq) listShell(LIKED_TITLE, esc(e.message), ""); return; }
   if (my !== listSeq) return;   // you've moved on to another page since
@@ -674,20 +704,27 @@ function renderLiked() {
     return;
   }
   const missing = d.albums.reduce((n, a) => n + a.songs.length, 0), plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? "" : "s"}`;
-  const sub = `${plural(missing, "song")} of the ${d.total.toLocaleString()} you've liked on Spotify ${missing === 1 ? "isn't" : "aren't"} in Plex, newest like first.` +
+  const sub = `${plural(missing, "song")} of the ${d.total.toLocaleString()} you've liked on Spotify ${missing === 1 ? "isn't" : "aren't"} in Plex.` +
     (d.hidden ? ` ${plural(d.hidden, "song")} hidden. <button class="link accent" id="lkUnhide">Show them again</button>` : "");
   const tools = `<div class="lib-tools">${streamSwitch("liked")}<button class="btn" id="lkPl" ${d.owned ? "" : "disabled"} title="Makes “${esc(d.playlist)}” in Plex, replacing the one made last time">Plex playlist of the ${d.owned.toLocaleString()} you own</button></div>`;
-  listShell(LIKED_TITLE, sub, d.albums.length ? `<div class="lk-list" id="lkList">${d.albums.slice(0, likedShown).map(likedRow).join("")}</div><div id="lkEnd"></div>`
+  const bar = `<div class="lk-bar">
+      <input type="search" id="lkQ" placeholder="Filter by artist, album or song" value="${esc(likedQ)}" aria-label="Filter liked songs">
+      <label class="lk-sort">Sort <select id="lkSort">${Object.entries(LK_SORTS).map(([k, [l]]) => `<option value="${k}" ${k === LK.sort ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <span class="seg" id="lkGroup" role="group" aria-label="Group by">${[["album", "By album"], ["artist", "By artist"]].map(([k, l]) =>
+        `<button data-lk-group="${k}" class="${LK.group === k ? "on" : ""}" aria-pressed="${LK.group === k}">${l}</button>`).join("")}</span>
+      <span class="muted" id="lkCount"></span></div>`;
+  listShell(LIKED_TITLE, sub, d.albums.length ? `${bar}<div class="lk-list" id="lkList"></div><div id="lkEnd"></div>`
     : `<div class="empty">${d.total ? "You own every song you've liked on Spotify." : "No liked songs on Spotify yet."}</div>`, tools);
-  if (likedObs) likedObs.disconnect();
-  if ($("lkEnd") && d.albums.length > likedShown) {   // more rows as you near the bottom
-    likedObs = new IntersectionObserver(es => {
-      if (!es[0].isIntersecting || view !== "liked" || !$("lkList")) return;
-      $("lkList").insertAdjacentHTML("beforeend", liked.albums.slice(likedShown, likedShown + LIKED_PAGE).map(likedRow).join(""));
-      likedShown += LIKED_PAGE;
-      if (likedShown >= liked.albums.length) likedObs.disconnect();
-    }, { rootMargin: "1200px" });
-    likedObs.observe($("lkEnd"));
+  if (d.albums.length) {
+    renderLikedList();
+    $("lkQ").oninput = e => { clearTimeout(likedTimer); likedTimer = setTimeout(() => { likedQ = e.target.value.trim(); renderLikedList(); }, 200); };
+    $("lkSort").onchange = e => { LK.sort = e.target.value; store.set("likedView", JSON.stringify(LK)); renderLikedList(); };
+    $("lkGroup").onclick = e => {
+      const b = e.target.closest("[data-lk-group]"); if (!b) return;
+      LK.group = b.dataset.lkGroup; store.set("likedView", JSON.stringify(LK));
+      $("lkGroup").querySelectorAll("button").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-pressed", x === b); });
+      renderLikedList();
+    };
   }
   if ($("lkUnhide")) $("lkUnhide").onclick = async () => { try { await api("/api/liked/unhide-all", { method: "POST" }); } catch (e) { toast(e.message); return; } loadLiked(); };
   $("lkPl").onclick = async () => {
@@ -697,9 +734,26 @@ function renderLiked() {
     $("lkPl").disabled = false;
   };
 }
+function renderLikedList() {
+  const { count, items } = likedItems(), list = $("lkList"); if (!list) return;
+  likedShown = Math.min(items.length, LIKED_PAGE);
+  list.innerHTML = items.length ? items.slice(0, likedShown).map(likedItem).join("") : `<div class="empty">Nothing matches “${esc(likedQ)}”.</div>`;
+  $("lkCount").textContent = likedQ ? `${count.toLocaleString()} of ${liked.albums.length.toLocaleString()} releases` : "";
+  if (likedObs) likedObs.disconnect();
+  if (items.length > likedShown) {   // more rows as you near the bottom
+    likedObs = new IntersectionObserver(es => {
+      if (!es[0].isIntersecting || view !== "liked" || !$("lkList")) return;
+      $("lkList").insertAdjacentHTML("beforeend", items.slice(likedShown, likedShown + LIKED_PAGE).map(likedItem).join(""));
+      likedShown += LIKED_PAGE;
+      if (likedShown >= items.length) likedObs.disconnect();
+    }, { rootMargin: "1200px" });
+    likedObs.observe($("lkEnd"));
+  }
+}
 const likedHide = (id, on) => api("/api/liked/hide", { method: "POST", body: JSON.stringify({ id, on }) });
 $("listBody").addEventListener("click", async e => {
   if (view !== "liked" || !liked) return;
+  const head = e.target.closest("[data-lk-head]"); if (head) { openArtist(head.dataset.lkHead, head.dataset.name); return; }
   const row = e.target.closest("[data-lk]"); if (!row) return;
   const id = row.dataset.lk, a = liked.albums.find(x => x.id === id); if (!a) return;
   if (!e.target.closest("button,a,select,label,input,.lk-box")) { openArtist(a.artist_key, a.artist); return; }   // anywhere on the row but its buttons

@@ -31,10 +31,23 @@ _PLAIN = str.maketrans({"ø": "o", "Ø": "O", "ł": "l", "Ł": "L", "đ": "d", "
                         "æ": "ae", "Æ": "AE", "œ": "oe", "Œ": "OE", "þ": "th", "Þ": "TH", "ı": "i", "ħ": "h", "Ħ": "H"})
 
 
+# Greek capitals used as styled Latin letters: "CHVRCHΞS" is Chvrches. Only applied to names that are otherwise plain Latin,
+# so a Greek artist's name is never half-converted.
+_LOOKALIKE = str.maketrans({"Ξ": "E", "Σ": "E", "Λ": "A", "Δ": "A"})
+
+
+def _restyle(name):
+    if any(c in name for c in "ΞΣΛΔ") and any(c.isascii() and c.isalpha() for c in name):
+        rest = [c for c in name if ord(c) > 127 and c not in "ΞΣΛΔ"]
+        if not any(unicodedata.category(c).startswith("L") and not unicodedata.name(c, "").startswith("LATIN") for c in rest):
+            return name.translate(_LOOKALIKE)
+    return name
+
+
 @functools.lru_cache(maxsize=50_000)   # called tens of thousands of times per sync, mostly with names it has seen before
 def artist_key(name):
     """One key per artist however it's spelled: 'The Beatles', 'Beatles', 'beatles' → 'beatles'."""
-    s = unicodedata.normalize("NFKD", (name or "").translate(_PLAIN)).encode("ascii", "ignore").decode().lower().strip()
+    s = unicodedata.normalize("NFKD", _restyle(name or "").translate(_PLAIN)).encode("ascii", "ignore").decode().lower().strip()
     s = s.replace("&", " and ").replace("+", " and ")
     s = re.sub(r"^the\s+", "", s)
     s = re.sub(r",\s*the$", "", s)
@@ -184,6 +197,24 @@ class Plex:
                     prev["mbid"] = prev["mbid"] or row["mbid"]
                 else:
                     out[k] = {**row, "key": k}
+        # The same MusicBrainz artist under two spellings ("Chvrches" on one album, "CHVRCHES ft." tags on another) is one artist.
+        by_mbid = {}
+        for r in sorted(out.values(), key=lambda r: -r["tracks"]):
+            if not r.get("mbid"):
+                continue
+            main = by_mbid.setdefault(r["mbid"], r)
+            if main is r:
+                continue
+            for f in ("plays", "tracks"):
+                main[f] += r[f]
+            main["albums"] += r["albums"]
+            main["album_rows"] += r["album_rows"]
+            main["rating"] = main["rating"] or r["rating"]
+            if r["last_played"] and (not main["last_played"] or r["last_played"] > main["last_played"]):
+                main["last_played"] = r["last_played"]
+            for sk in [s for s in self.songs if s.startswith(r["key"] + "|")]:   # its songs count under the main spelling too
+                self.songs.setdefault(main["key"] + sk[len(r["key"]):], self.songs[sk])
+            del out[r["key"]]
         return list(out.values())
 
     def machine_id(self):

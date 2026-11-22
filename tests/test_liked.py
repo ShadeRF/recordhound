@@ -292,3 +292,23 @@ def test_album_tracks_show_what_you_own_and_liked(client, monkeypatch):
     monkeypatch.setattr(m, "_dz", Down())
     r = c.get("/api/album/556/tracks?name=Radiohead")
     assert r.status_code == 502 and db.cache_get("dzalb:556") is None   # a failure isn't remembered
+
+
+def test_styled_names_and_two_spellings_of_one_artist():
+    from app.clients import artist_key
+    assert artist_key("CHVRCHΞS") == artist_key("CHVRCHES") == "chvrches"
+    assert artist_key("Σωκράτης Μάλαμας") == "σωκράτης μάλαμας"   # a Greek name stays Greek
+    plex = object.__new__(clients.Plex)
+    plex.sections = lambda: [{"key": "1", "title": "Music"}]
+    data = {8: [{"ratingKey": "a1", "title": "Chvrches", "Guid": [{"id": "mbid://m1"}]},
+                {"ratingKey": "a2", "title": "Chvrches & Friends", "Guid": [{"id": "mbid://m1"}]}],
+            9: [{"ratingKey": "b1", "parentRatingKey": "a1", "title": "Every Open Eye"},
+                {"ratingKey": "b2", "parentRatingKey": "a2", "title": "The Bones Of What You Believe"}],
+            10: [{"ratingKey": "t1", "grandparentRatingKey": "a1", "parentRatingKey": "b1", "title": "Clearest Blue", "viewCount": 5},
+                 {"ratingKey": "t2", "grandparentRatingKey": "a1", "parentRatingKey": "b1", "title": "Leave a Trace"},
+                 {"ratingKey": "t3", "grandparentRatingKey": "a2", "parentRatingKey": "b2", "title": "The Mother We Share", "viewCount": 2}]}
+    plex._paged = lambda sid, kind, **k: iter(data[kind])
+    rows = plex.artists()
+    assert len(rows) == 1 and rows[0]["key"] == "chvrches" and rows[0]["plays"] == 7
+    assert sorted(rows[0]["albums"]) == ["Every Open Eye", "The Bones Of What You Believe"]
+    assert plex.songs["chvrches|themotherweshare"] == "t3"

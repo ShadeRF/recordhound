@@ -571,6 +571,16 @@ svg.inl { width: 14px; height: 14px; vertical-align: -2px; stroke: currentColor;
 
 /* Your Library */
 .lib-banner .stream-seg { flex-shrink: 0; }
+.lk-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: -4px 0 14px; }
+.lk-bar input[type=search] { flex: 1 1 240px; max-width: 360px; }
+.lk-sort { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; }
+.lk-bar .seg button { padding: 6px 12px; }
+.lk-ahead { display: flex; align-items: baseline; gap: 10px; margin: 14px 2px 0; padding: 4px 2px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.lk-ahead:first-child { margin-top: 0; }
+.lk-ahead b { font: 600 18px Georgia, serif; }
+.lk-ahead small { color: var(--dim); }
+.lk-ahead:hover b { color: var(--accent); }
+.lk-ahead:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .lk-list { display: flex; flex-direction: column; gap: 10px; }
 .lk-row { display: grid; grid-template-columns: 72px 1fr auto; gap: 6px 16px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px 10px 10px; }
 .lk-cover { width: 72px; height: 72px; border-radius: 6px; object-fit: cover; background: #221f1c; }

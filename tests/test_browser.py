@@ -602,3 +602,43 @@ def test_albums_on_an_artist_page_open_with_links_and_lidarr(page, site, monkeyp
         if before:
             db.conn().execute("INSERT INTO cache(k, json, at) VALUES (?, ?, ?)", ("dz:" + lib["key"], before[0], before[1]))
         db.commit()
+
+
+def test_liked_not_owned_sorts_groups_and_filters(page, monkeypatch):
+    from app import config, db
+    song = lambda t, a, al, aid, when, year: {"id": aid + t, "title": t, "artists": [a], "album": al, "album_id": aid, "album_type": "album",
+                                              "album_artist": a, "year": year, "cover": None, "added_at": when}
+    db.set_meta("spotify_liked", [song("Isabelle", "Whitney Whitney", "Isabelle", "al1", "2026-02-01", "2026"),
+                                  song("Feels So Far Away", "Bellvie", "Feels So Far Away", "al2", "2026-01-01", "2025"),
+                                  song("A Man Written by a Woman", "Whitney Whitney", "A Man Written", "al3", "2025-06-01", "2024"),
+                                  song("Lead Me Home", "The California Honeydrops", "A River's Invitation", "al4", "2025-01-01", "2015")])
+    db.set_meta("plex_songs", {})
+    db.set_meta("liked_hidden", None)
+    monkeypatch.setattr(config, "SPOTIFY_REFRESH_TOKEN", "r")
+    titles = lambda: page.locator(".lk-row .lk-t").all_inner_texts()
+    try:
+        go(page, "liked")
+        page.evaluate("localStorage.removeItem('likedView')")
+        page.reload(); settle(page)
+        assert titles() == ["Isabelle", "Feels So Far Away", "A Man Written", "A River's Invitation"]   # newest like first
+        page.select_option("#lkSort", "artist")
+        assert titles() == ["Feels So Far Away", "A River's Invitation", "Isabelle", "A Man Written"]   # "The" is ignored
+        page.select_option("#lkSort", "year")
+        assert titles()[0] == "Isabelle" and titles()[-1] == "A River's Invitation"
+        page.click("[data-lk-group=artist]")
+        heads = page.locator(".lk-ahead b").all_inner_texts()
+        assert heads == ["Whitney Whitney", "Bellvie", "The California Honeydrops"]
+        assert "2 songs · 2 releases" in page.locator(".lk-ahead").first.inner_text()
+        page.fill("#lkQ", "isab")
+        page.wait_for_function("document.querySelectorAll('.lk-row').length === 1")
+        assert page.locator("#lkCount").inner_text() == "1 of 4 releases"
+        page.locator(".lk-ahead").first.click()   # an artist heading opens the artist
+        page.wait_for_selector("#drawer h2")
+        assert page.locator("#drawer h2").inner_text() == "Whitney Whitney"
+        page.keyboard.press("Escape")
+        page.reload(); settle(page)   # the choices are remembered
+        assert page.locator("#lkSort").input_value() == "year" and page.locator("[data-lk-group=artist].on").count() == 1
+    finally:
+        page.evaluate("localStorage.removeItem('likedView')")
+        for k in ("spotify_liked", "plex_songs"):
+            db.set_meta(k, None)
