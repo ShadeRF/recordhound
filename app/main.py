@@ -586,13 +586,14 @@ def artist(key: str, name: str = ""):
             except Exception:
                 tracks = []
     owned_albums = {album_key(t) for t in (lib or {}).get("albums", [])}
+    plex_rk = {album_key(a.get("title")): a.get("rk") for a in db.get_meta("plex_albums") or [] if a.get("artist_key") == key} if lib else {}
     albums, seen = [], set()
     for a in dz.get("albums", []):
         ak = album_key(a["title"])
         if ak in seen or a.get("type") not in ("album", "ep"):
             continue
         seen.add(ak)
-        albums.append({**a, "owned": ak in owned_albums})
+        albums.append({**a, "owned": ak in owned_albums, "plex_rk": plex_rk.get(ak)})
     albums.sort(key=lambda a: a.get("date") or "", reverse=True)
     fb = db.feedback().get(key)
     out = {
@@ -842,6 +843,25 @@ def lidarr_add(body: LidarrAdd):
     db.set_feedback(body.key, "added", body.name)
     db.set_meta("lidarr_last", {"quality_id": body.quality_id, "metadata_id": body.metadata_id, "root": body.root, "monitor": body.monitor})
     return {"ok": True}
+
+
+class LidarrAlbum(BaseModel):
+    artist: str
+    title: str
+    quality_id: int
+    metadata_id: int
+    root: str
+
+
+@app.post("/api/lidarr/album")
+def lidarr_album(body: LidarrAlbum):
+    """One album from an artist's page: only that album is monitored and searched."""
+    try:
+        title = Lidarr(config.LIDARR_URL, config.LIDARR_API_KEY).add_album(body.artist, body.title, body.quality_id, body.metadata_id, body.root)
+    except Exception as e:
+        raise HTTPException(502, friendly_error(e))
+    db.set_meta("lidarr_last", {**db.get_meta("lidarr_last", {}), "quality_id": body.quality_id, "metadata_id": body.metadata_id, "root": body.root})
+    return {"ok": True, "title": title}
 
 
 @app.get("/api/lidarr/last")

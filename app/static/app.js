@@ -200,7 +200,7 @@ document.addEventListener("click", e => {
     openArtist(c.dataset.key, c.dataset.name || (REG.get(c.dataset.key) || {}).name);
   }
 });
-document.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.classList?.contains("card")) e.target.click(); });
+document.addEventListener("keydown", e => { if (e.key === "Enter" && (e.target.classList?.contains("card") || e.target.classList?.contains("lk-row"))) e.target.click(); });
 async function rateArtist(rating) {
   const r = current; if (!r) return;
   try { await api("/api/rate", { method: "POST", body: JSON.stringify({ key: r.key, name: r.name, rating }) }); } catch (e) { toast(e.message); return; }
@@ -253,7 +253,7 @@ function nowPlaying(t, artist) {
 }
 audio.addEventListener("play", paintTracks); audio.addEventListener("pause", paintTracks);
 audio.addEventListener("ended", () => { const [k, i] = (playing || "").split(":"); if (current && current.key === k && current.tracks[+i + 1]) playTrack(+i + 1); else paintTracks(); });
-audio.addEventListener("timeupdate", () => { const b = document.querySelector(".trk.on .bar i"); if (b && audio.duration) b.style.width = (audio.currentTime / audio.duration * 100) + "%"; });
+audio.addEventListener("timeupdate", () => { const b = document.querySelector(".trk.on .tprog i"); if (b && audio.duration) b.style.width = (audio.currentTime / audio.duration * 100) + "%"; });
 $("np").onclick = e => {
   if (e.target.id === "npClose") { audio.pause(); audio.removeAttribute("src"); playing = null; $("np").classList.remove("on"); paintTracks(); }
   if (e.target.id === "npToggle") audio.paused ? audio.play() : audio.pause();
@@ -340,7 +340,7 @@ function renderDrawer(r, loading) {
       ${lidarrOn && !r.in_lidarr ? `<button class="btn primary" data-lidarr>${ICON.plus}Add to Lidarr</button>` : ""}
       ${r.owned ? "" : `<button class="btn ${SAVED.has(r.key) ? "on" : ""}" id="dSave" data-save>${ICON.heart}${SAVED.has(r.key) ? "Saved" : "Save"}</button>`}
       <a class="btn" href="#/like/${encodeURIComponent(r.key)}/${q}" data-close-nav>${ICON.similar}More like this</a>
-      <button class="btn ${r.my_rating ? "on" : ""}" data-rate-open>${ICON.star}${r.my_rating ? starText(r.my_rating) : "Rate"}</button>
+      ${r.my_rating ? "" : `<button class="btn" data-rate-open>${ICON.star}Rate</button>`}
       ${r.owned ? "" : `<button class="btn" data-act="known" title="You already know them; stop suggesting">${ICON.ear}Already know them</button>
         <button class="btn" data-act="dismissed" title="Hide and show fewer like them">${ICON.hide}Not interested</button>`}
     </div>
@@ -353,7 +353,7 @@ function renderDrawer(r, loading) {
     ${loading ? `<div class="sec"><div class="shimmer" style="height:160px"></div></div>` : ""}
     ${(r.tracks || []).length ? `<div class="sec"><h4>Listen</h4><div class="tracks">${r.tracks.map((t, i) => `
       <div class="trk" data-i="${i}"><button class="pb" aria-label="Play">${ICON.play}</button>${t.cover ? `<img src="${esc(t.cover)}" alt="">` : ""}
-        <div class="nm"><b>${esc(t.title)}</b><small>${esc(t.album || "")}</small></div><div class="bar"><i></i></div></div>`).join("")}</div>
+        <div class="nm"><b>${esc(t.title)}</b><small>${esc(t.album || "")}</small></div><div class="tprog"><i></i></div></div>`).join("")}</div>
       <div class="help" style="color:var(--dim);font-size:12px;margin-top:6px">30-second previews from Deezer.</div></div>` : ""}
     ${b.length ? `<div class="sec"><h4>Why this pick</h4><div class="seeds">${b.map(x => `
       <div class="seed" data-open="${esc(x.key)}" style="cursor:pointer">
@@ -365,9 +365,10 @@ function renderDrawer(r, loading) {
     ${srcs.length ? `<div class="sec"><h4>Your listening</h4><div class="srcs">${srcs.map(([s, v]) => `<span><img src="${fav((SRC[s] || [s])[0])}" alt="">${esc((SRC[s] || [, s])[1])}${v.plays && s !== "spotify" ? ` · ${fmtN(v.plays)} plays` : ""}${v.rank ? ` · #${v.rank}` : ""}${v.saved ? " · followed" : ""}</span>`).join("")}</div></div>` : ""}
     ${(r.matches || []).length ? `<div class="sec"><h4>Matches your taste</h4><div class="chips">${r.matches.map(t => `<a href="#/picks" data-tagdrill="${esc(t)}">${esc(t)}</a>`).join("")}</div></div>` : ""}
     ${r.bio ? `<div class="sec"><h4>About</h4><p class="bio">${esc(r.bio)}${r.bio_url ? ` <a href="${esc(r.bio_url)}" target="_blank" rel="noopener">Read more on Wikipedia</a>` : r.url ? ` <a href="${esc(r.url)}" target="_blank" rel="noopener">Read more on Last.fm</a>` : ""}</p></div>` : ""}
-    ${(r.albums || []).length ? `<div class="sec"><h4>Albums &amp; EPs</h4><div class="albums">${r.albums.slice(0, 24).map(a => `
-      <div class="alb${a.owned ? " own" : ""}">${a.cover ? `<img loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="ph"></div>`}${a.owned ? `<span class="own-b">OWNED</span>` : ""}
-        <b>${esc(a.title)}</b><small>${esc((a.date || "").slice(0, 4))}${a.type === "ep" ? " · EP" : ""}</small></div>`).join("")}</div></div>` : ""}
+    ${(r.albums || []).length ? `<div class="sec"><h4>Albums &amp; EPs</h4><div class="albums">${r.albums.slice(0, 24).map((a, i) => `
+      <button type="button" class="alb${a.owned ? " own" : ""}" data-alb="${i}" aria-expanded="false">${a.cover ? `<img loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="ph"></div>`}${a.owned ? `<span class="own-b">OWNED</span>` : ""}
+        <b>${esc(a.title)}</b><small>${esc((a.date || "").slice(0, 4))}${a.type === "ep" ? " · EP" : ""}</small></button>`).join("")}</div>
+      <div class="albbox" id="albBox" hidden></div></div>` : ""}
     ${(r.similar || []).length ? `<div class="sec"><h4>Similar artists</h4><div class="simrow">${r.similar.map(s => `<a data-open="${esc(s.key)}" data-name="${esc(s.name)}" class="${s.owned ? "own" : ""}" title="${s.owned ? "In your library" : ""}"><img loading="lazy" src="${artURL(s)}" alt="" onerror="this.style.visibility='hidden'">${esc(s.name)}</a>`).join("")}</div></div>` : ""}
     ${r.owned ? `<div class="sec noseed-sec"><label class="inline"><input type="checkbox" data-noseed ${r.noseed ? "checked" : ""}> Don't learn from this artist</label>
       <div class="help" style="color:var(--dim);font-size:12px;margin:4px 0 0 24px">Keep them in your library, but stop them from shaping your picks. Good for kids' music or someone else's albums.</div></div>` : ""}
@@ -377,8 +378,60 @@ function renderDrawer(r, loading) {
   if (st) { st.onclick = e => { const b = e.target.closest("[data-star]"); if (b) rateArtist(starValue(b, e)); }; starHover(st); }
   paintTracks();
 }
+function showAlbum(i) {
+  const r = current, a = r.albums[i], box = $("albBox");
+  const again = !box.hidden && box.dataset.i === String(i);
+  document.querySelectorAll("#drawer [data-alb]").forEach(b => { b.setAttribute("aria-expanded", "false"); b.classList.remove("sel"); });
+  if (again) { box.hidden = true; return; }   // a second click on the same album closes it
+  const btn = document.querySelector(`#drawer [data-alb="${i}"]`); btn.classList.add("sel"); btn.setAttribute("aria-expanded", "true");
+  const q = encodeURIComponent(`${r.name} ${a.title}`);
+  const plex = a.plex_rk && lastStatus.plex_machine ? `https://app.plex.tv/desktop/#!/server/${lastStatus.plex_machine}/details?key=${encodeURIComponent("/library/metadata/" + a.plex_rk)}` : "";
+  box.dataset.i = i; box.hidden = false;
+  box.innerHTML = `${a.cover ? `<img src="${esc(a.cover)}" alt="">` : `<div class="ph"></div>`}
+    <div class="albinfo"><b>${esc(a.title)}</b><small>${esc([(a.date || "").slice(0, 4), a.type === "ep" ? "EP" : "Album", a.owned ? "in your library" : ""].filter(Boolean).join(" · "))}</small>
+      <div class="albacts">
+        ${plex ? `<a class="btn primary" href="${plex}" target="_blank" rel="noopener"><img class="svc" src="${fav("plex.tv")}" alt="">Open in Plex</a>` : ""}
+        ${lastStatus.lidarr && !a.owned ? `<button class="btn primary" data-alb-lidarr>${ICON.plus}Add album to Lidarr</button>` : ""}
+        ${a.id ? `<a class="btn" href="https://www.deezer.com/album/${encodeURIComponent(a.id)}" target="_blank" rel="noopener"><img class="svc" src="${fav("deezer.com")}" alt="">Deezer</a>` : ""}
+        <a class="btn" href="https://open.spotify.com/search/${q}" target="_blank" rel="noopener"><img class="svc" src="${fav("spotify.com")}" alt="">Spotify</a></div>
+      <div class="albl" hidden></div></div>`;
+  box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+// Quality, metadata and folder for sending one album to Lidarr; filled in from the last add.
+async function albumLidarrForm(box, note) {
+  box.hidden = false; box.innerHTML = `<div class="shimmer" style="height:40px"></div>`;
+  try {
+    if (!lidarrOpts) lidarrOpts = await api("/api/lidarr/options");
+    const last = await api("/api/lidarr/last"), o = lidarrOpts;
+    const sel = (arr, cls, v, lbl) => `<select class="${cls}">${arr.map(x => `<option value="${esc(x.id ?? x.path)}" ${String(x.id ?? x.path) === String(v) ? "selected" : ""}>${esc(lbl(x))}</option>`).join("")}</select>`;
+    box.innerHTML = `<div class="row">
+        <label>Quality profile${sel(o.profiles, "lkQ", last.quality_id, x => x.name)}</label>
+        <label>Metadata profile${sel(o.metadata, "lkM", last.metadata_id, x => x.name)}</label>
+        <label>Root folder${sel(o.roots, "lkR", last.root, x => x.path)}</label>
+        <button class="btn primary" data-lk-add>Add album</button></div>
+      <p class="muted">${note}</p>`;
+  } catch (err) { box.innerHTML = `<div class="muted">${esc(err.message)}</div>`; }
+}
+const albumLidarrChoice = box => ({ quality_id: +box.querySelector(".lkQ").value, metadata_id: +box.querySelector(".lkM").value, root: box.querySelector(".lkR").value });
+const albumNote = (artist, inLidarr) => `Lidarr monitors and searches for this album only.${inLidarr ? "" : ` ${esc(artist)} isn't in Lidarr yet, so they're added with nothing else monitored.`}`;
 $("drawer").addEventListener("click", async e => {
   const t = e.target.closest(".trk"); if (t) { playTrack(+t.dataset.i); return; }
+  const ab = e.target.closest("[data-alb]"); if (ab) { showAlbum(+ab.dataset.alb); return; }
+  if (e.target.closest("[data-alb-lidarr]")) {
+    const box = document.querySelector("#albBox .albl");
+    if (!box.hidden) { box.hidden = true; return; }
+    albumLidarrForm(box, albumNote(current.name, current.in_lidarr)); return;
+  }
+  const add = e.target.closest("#albBox [data-lk-add]");
+  if (add) {
+    const a = current.albums[+$("albBox").dataset.i]; add.disabled = true;
+    try {
+      const r = await api("/api/lidarr/album", { method: "POST", body: JSON.stringify({ artist: current.name, title: a.title, ...albumLidarrChoice($("albBox")) }) });
+      document.querySelector("#albBox .albl").innerHTML = `<p class="muted">✓ Sent to Lidarr. It's looking for ${esc(r.title || a.title)}.</p>`;
+      toast(`Lidarr is looking for ${r.title || a.title}`);
+    } catch (err) { toast(err.message); add.disabled = false; }
+    return;
+  }
   const nav = e.target.closest("[data-nav]"); if (nav) { openArtist(nav.dataset.nav); return; }
   if (e.target.closest("[data-close]")) { closeDrawer(); return; }
   if (e.target.closest("[data-close-nav]")) { closeDrawer(); return; }
@@ -550,10 +603,14 @@ async function loadLibrary(more, typing) {
 }
 
 // ------------------------------------------------------------------ liked, not owned (Spotify Liked Songs that aren't in Plex)
-let liked = null, likedShown = 150;
+let liked = null, likedShown = 0, likedObs = null;
+const LIKED_PAGE = 60;
+const streamSwitch = on => `<div class="seg stream-seg" role="tablist">${[["stream", "Artists"], ["liked", "Liked songs"]].map(([v, l]) =>
+  `<button role="tab" data-go="${v}" aria-selected="${v === on}" class="${v === on ? "on" : ""}">${l}</button>`).join("")}</div>`;
+document.addEventListener("click", e => { const b = e.target.closest("[data-go]"); if (b && !b.classList.contains("on")) go(b.dataset.go); });
 const LIKED_TITLE = "Liked, not owned";
 async function loadLiked() {
-  likedShown = 150;
+  likedShown = LIKED_PAGE;
   listShell(LIKED_TITLE, "", `<div class="shimmer" style="height:300px;border-radius:12px"></div>`);
   const my = ++listSeq; let d; try { d = await api("/api/liked"); } catch (e) { if (my === listSeq) listShell(LIKED_TITLE, esc(e.message), ""); return; }
   if (my !== listSeq) return;   // you've moved on to another page since
@@ -561,10 +618,10 @@ async function loadLiked() {
 }
 function likedRow(a) {
   const lid = lastStatus.lidarr;
-  return `<div class="lk-row" data-lk="${esc(a.id)}">
+  return `<div class="lk-row" data-lk="${esc(a.id)}" tabindex="0" title="Open ${esc(a.artist || "")}">
     ${a.cover ? `<img class="lk-cover" loading="lazy" src="${esc(a.cover)}" alt="">` : `<div class="lk-cover"></div>`}
     <div class="lk-main"><div class="lk-t">${esc(a.title || "")}</div>
-      <div class="lk-s"><button class="link" data-lk-artist>${esc(a.artist || "")}</button>${a.year ? " · " + esc(a.year) : ""}${a.type === "single" ? " · Single" : a.type === "compilation" ? " · Compilation" : ""}</div>
+      <div class="lk-s"><span class="lk-a">${esc(a.artist || "")}</span>${a.year ? " · " + esc(a.year) : ""}${a.type === "single" ? " · Single" : a.type === "compilation" ? " · Compilation" : ""}</div>
       <div class="lk-songs"><span class="lk-heart" aria-label="Liked">♥</span> ${a.songs.map(esc).join(" · ")}</div></div>
     <div class="lk-act">${!lid ? "" : a.requested ? `<span class="pill on">✓ Sent to Lidarr</span>` : `<button class="btn primary" data-lk-lidarr>${ICON.plus}Add album to Lidarr</button>`}
       <button class="btn" data-lk-hide>Hide</button></div>
@@ -573,19 +630,27 @@ function likedRow(a) {
 function renderLiked() {
   const d = liked;
   if (!d.ready) {
-    listShell(LIKED_TITLE, "", d.connected ? `<div class="empty">This fills in after your next sync, which reads your Liked Songs from Spotify and every song in Plex.</div>`
-      : `<div class="empty">Connect your Spotify account to see the songs you've liked there that aren't in your Plex library.<br><br><button class="btn primary" id="lkConnect">Connect Spotify in Settings</button></div>`);
+    listShell(LIKED_TITLE, "", (d.connected ? `<div class="empty">This fills in after your next sync, which reads your Liked Songs from Spotify and every song in Plex.</div>`
+      : `<div class="empty">Connect your Spotify account to see the songs you've liked there that aren't in your Plex library.<br><br><button class="btn primary" id="lkConnect">Connect Spotify in Settings</button></div>`), `<div class="lib-tools">${streamSwitch("liked")}</div>`);
     if ($("lkConnect")) $("lkConnect").onclick = () => openSetting("spotify");
     return;
   }
   const missing = d.albums.reduce((n, a) => n + a.songs.length, 0), plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? "" : "s"}`;
   const sub = `${plural(missing, "song")} of the ${d.total.toLocaleString()} you've liked on Spotify ${missing === 1 ? "isn't" : "aren't"} in Plex, newest like first.` +
     (d.hidden ? ` ${plural(d.hidden, "song")} hidden. <button class="link accent" id="lkUnhide">Show them again</button>` : "");
-  const tools = `<div class="lib-tools"><button class="btn" id="lkPl" ${d.owned ? "" : "disabled"} title="Makes “${esc(d.playlist)}” in Plex, replacing the one made last time">Plex playlist of the ${d.owned.toLocaleString()} you own</button></div>`;
-  listShell(LIKED_TITLE, sub, d.albums.length ? `<div class="lk-list">${d.albums.slice(0, likedShown).map(likedRow).join("")}</div>
-      ${d.albums.length > likedShown ? `<div style="text-align:center;margin:24px"><button class="btn" id="lkMore">Show more</button></div>` : ""}`
+  const tools = `<div class="lib-tools">${streamSwitch("liked")}<button class="btn" id="lkPl" ${d.owned ? "" : "disabled"} title="Makes “${esc(d.playlist)}” in Plex, replacing the one made last time">Plex playlist of the ${d.owned.toLocaleString()} you own</button></div>`;
+  listShell(LIKED_TITLE, sub, d.albums.length ? `<div class="lk-list" id="lkList">${d.albums.slice(0, likedShown).map(likedRow).join("")}</div><div id="lkEnd"></div>`
     : `<div class="empty">${d.total ? "You own every song you've liked on Spotify." : "No liked songs on Spotify yet."}</div>`, tools);
-  if ($("lkMore")) $("lkMore").onclick = () => { likedShown += 150; renderLiked(); };
+  if (likedObs) likedObs.disconnect();
+  if ($("lkEnd") && d.albums.length > likedShown) {   // more rows as you near the bottom
+    likedObs = new IntersectionObserver(es => {
+      if (!es[0].isIntersecting || view !== "liked" || !$("lkList")) return;
+      $("lkList").insertAdjacentHTML("beforeend", liked.albums.slice(likedShown, likedShown + LIKED_PAGE).map(likedRow).join(""));
+      likedShown += LIKED_PAGE;
+      if (likedShown >= liked.albums.length) likedObs.disconnect();
+    }, { rootMargin: "1200px" });
+    likedObs.observe($("lkEnd"));
+  }
   if ($("lkUnhide")) $("lkUnhide").onclick = async () => { try { await api("/api/liked/unhide-all", { method: "POST" }); } catch (e) { toast(e.message); return; } loadLiked(); };
   $("lkPl").onclick = async () => {
     $("lkPl").disabled = true;
@@ -599,7 +664,7 @@ $("listBody").addEventListener("click", async e => {
   if (view !== "liked" || !liked) return;
   const row = e.target.closest("[data-lk]"); if (!row) return;
   const id = row.dataset.lk, a = liked.albums.find(x => x.id === id); if (!a) return;
-  if (e.target.closest("[data-lk-artist]")) { openArtist(a.artist_key, a.artist); return; }
+  if (!e.target.closest("button,a,select,label,input,.lk-box")) { openArtist(a.artist_key, a.artist); return; }   // anywhere on the row but its buttons
   if (e.target.closest("[data-lk-hide]")) {
     try { await likedHide(id, true); } catch (err) { toast(err.message); return; }
     liked.albums = liked.albums.filter(x => x !== a); liked.hidden += a.songs.length; renderLiked();
@@ -609,26 +674,14 @@ $("listBody").addEventListener("click", async e => {
   if (e.target.closest("[data-lk-lidarr]")) {
     const box = row.querySelector(".lk-box");
     if (!box.hidden) { box.hidden = true; return; }
-    box.hidden = false; box.innerHTML = `<div class="shimmer" style="height:40px"></div>`;
-    try {
-      if (!lidarrOpts) lidarrOpts = await api("/api/lidarr/options");
-      const last = await api("/api/lidarr/last"), o = lidarrOpts;
-      const sel = (arr, cls, v, lbl) => `<select class="${cls}">${arr.map(x => `<option value="${esc(x.id ?? x.path)}" ${String(x.id ?? x.path) === String(v) ? "selected" : ""}>${esc(lbl(x))}</option>`).join("")}</select>`;
-      box.innerHTML = `<div class="row">
-          <label>Quality profile${sel(o.profiles, "lkQ", last.quality_id, x => x.name)}</label>
-          <label>Metadata profile${sel(o.metadata, "lkM", last.metadata_id, x => x.name)}</label>
-          <label>Root folder${sel(o.roots, "lkR", last.root, x => x.path)}</label>
-          <button class="btn primary" data-lk-add>Add album</button></div>
-        <p class="muted">Lidarr monitors and searches for this album only.${a.artist_in_lidarr ? "" : ` ${esc(a.artist)} isn't in Lidarr yet, so they're added with nothing else monitored.`}</p>`;
-    } catch (err) { box.innerHTML = `<div class="muted">${esc(err.message)}</div>`; }
+    albumLidarrForm(box, albumNote(a.artist, a.artist_in_lidarr));
     return;
   }
   const add = e.target.closest("[data-lk-add]");
   if (add) {
     add.disabled = true;
     try {
-      const r = await api("/api/liked/lidarr", { method: "POST", body: JSON.stringify({ id, quality_id: +row.querySelector(".lkQ").value,
-        metadata_id: +row.querySelector(".lkM").value, root: row.querySelector(".lkR").value }) });
+      const r = await api("/api/liked/lidarr", { method: "POST", body: JSON.stringify({ id, ...albumLidarrChoice(row) }) });
       a.requested = true; row.outerHTML = likedRow(a); toast(`Lidarr is looking for ${r.title || a.title}`);
     } catch (err) { toast(err.message); add.disabled = false; }
   }
@@ -1130,7 +1183,7 @@ function showView(v, keepFilters) {
   if (grid) {
     if (!keepFilters) loadF();
     syncControls();
-    $("gridHead").innerHTML = v === "stream" ? `<div class="lib-banner"><h3>You stream these, but don't own them</h3><p>Artists you play on ListenBrainz, Spotify, YouTube Music or Last.fm that aren't in Plex${lastStatus.lidarr ? " or Lidarr" : ""}, most-played first.${lastStatus.lidarr ? " Add them to Lidarr from here." : ""}</p><p><a class="link accent" href="#/liked">Songs you've liked on Spotify but don't own ›</a></p></div>` : "";
+    $("gridHead").innerHTML = v === "stream" ? `<div class="lib-banner"><div><h3>You stream these, but don't own them</h3><p>Artists you play on ListenBrainz, Spotify, YouTube Music or Last.fm that aren't in Plex${lastStatus.lidarr ? " or Lidarr" : ""}, most-played first.${lastStatus.lidarr ? " Add them to Lidarr from here." : ""}</p></div>${streamSwitch("stream")}</div>` : "";
     api("/api/tags?kind=" + gridKind()).then(d => tagFacets = d).catch(() => {});
     load(true);
   }

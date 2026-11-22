@@ -508,18 +508,87 @@ def test_liked_not_owned_lists_missing_songs_and_hides_albums(page, monkeypatch)
     monkeypatch.setattr(config, "SPOTIFY_REFRESH_TOKEN", "r")
     try:
         go(page, "stream")
-        page.click("text=Songs you've liked on Spotify but don't own")
+        page.click("#gridHead [data-go=liked]")
         settle(page)
         assert page.locator("#nav button.on").inner_text() == "You Stream"
         rows = page.locator(".lk-row")
         assert rows.count() == 2 and "Isabelle" in rows.first.inner_text()
         assert "2 songs of the 3 you've liked" in view(page).inner_text()
+        rows.first.locator(".lk-songs").click()   # anywhere on the row opens the artist
+        page.wait_for_selector("#drawer h2")
+        assert page.locator("#drawer h2").inner_text() == "Whitney Whitney"
+        page.keyboard.press("Escape")
         assert "of the 1 you own" in page.locator("#lkPl").inner_text()
         rows.first.locator("[data-lk-hide]").click()
         page.wait_for_function("document.querySelectorAll('.lk-row').length === 1")
         assert "1 song hidden" in view(page).inner_text() and "1 song of the 3" in view(page).inner_text()
         page.reload(); settle(page)
         assert page.locator(".lk-row").count() == 1 and "1 song hidden" in view(page).inner_text()   # remembered
+        page.click("#listBody [data-go=stream]")   # and back to the artists
+        settle(page)
+        assert view(page).get_attribute("id") == "v-grid" and page.locator("#gridHead [data-go=stream].on").count() == 1
     finally:
         for k in ("spotify_liked", "plex_songs", "liked_hidden"):
             db.set_meta(k, None)
+
+
+def test_liked_not_owned_keeps_loading_as_you_scroll(page, monkeypatch):
+    from app import config, db
+    db.set_meta("spotify_liked", [{"id": f"t{i}", "title": f"Song {i}", "artists": [f"Artist {i}"], "album": f"Album {i}", "album_id": f"al{i}",
+                                   "album_type": "album", "album_artist": f"Artist {i}", "year": "2020", "cover": None,
+                                   "added_at": f"2026-01-01T00:{i // 60:02d}:{i % 60:02d}Z"} for i in range(130)])
+    db.set_meta("plex_songs", {})
+    monkeypatch.setattr(config, "SPOTIFY_REFRESH_TOKEN", "r")
+    try:
+        go(page, "liked")
+        assert page.locator(".lk-row").count() == 60 and not page.locator("#lkMore").count()
+        for want in (120, 130):
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.wait_for_function(f"document.querySelectorAll('.lk-row').length === {want}")
+    finally:
+        db.set_meta("spotify_liked", None); db.set_meta("plex_songs", None)
+
+
+def test_albums_on_an_artist_page_open_with_links_and_lidarr(page, site, monkeypatch):
+    from app import config, db
+    lib = next(r for r in db.library_map().values() if r.get("albums"))
+    owned = lib["albums"][0]
+    before = db.conn().execute("SELECT json, at FROM cache WHERE k=?", ("dz:" + lib["key"],)).fetchone()
+    db.cache_put("dz:" + lib["key"], {"id": 1, "name": lib["name"], "albums": [
+        {"id": 11, "title": owned, "type": "album", "date": "2001-01-01", "cover": None},
+        {"id": 22, "title": "Not Yet Mine", "type": "album", "date": "2024-05-01", "cover": None}]})
+    db.commit()
+    monkeypatch.setattr(config, "LIDARR_URL", "http://lidarr.test"); monkeypatch.setattr(config, "LIDARR_API_KEY", "k")
+    sent = []
+
+    class FakeLidarr:
+        def __init__(self, *a):
+            pass
+
+        def options(self):
+            return {"profiles": [{"id": 1, "name": "Lossless"}], "metadata": [{"id": 2, "name": "Standard"}], "roots": [{"path": "/music", "free": None}]}
+
+        def add_album(self, artist, title, q, md, root):
+            sent.append((artist, title, q, md, root))
+            return title
+    monkeypatch.setattr(site["m"], "Lidarr", FakeLidarr)
+    try:
+        go(page, "home")
+        page.evaluate("([k, n]) => openArtist(k, n)", [lib["key"], lib["name"]])
+        page.wait_for_selector("#drawer [data-alb]")
+        page.click("#drawer [data-alb='0']")   # newest first: the one you don't own
+        box = page.locator("#albBox")
+        assert box.is_visible() and "Not Yet Mine" in box.inner_text() and "deezer.com/album/22" in box.inner_html()
+        box.locator("[data-alb-lidarr]").click()
+        box.locator("[data-lk-add]").click()
+        page.wait_for_function("document.querySelector('#albBox .albl').innerText.includes('Sent to Lidarr')")
+        assert sent == [(lib["name"], "Not Yet Mine", 1, 2, "/music")]
+        page.click("#drawer [data-alb='1']")   # the one you own: no Lidarr button
+        assert owned in box.inner_text() and "in your library" in box.inner_text() and not box.locator("[data-alb-lidarr]").count()
+        page.click("#drawer [data-alb='1']")   # a second click closes it
+        assert box.is_hidden()
+    finally:   # leave the cache as it was, for the tests that run after this one
+        db.conn().execute("DELETE FROM cache WHERE k=?", ("dz:" + lib["key"],))
+        if before:
+            db.conn().execute("INSERT INTO cache(k, json, at) VALUES (?, ?, ?)", ("dz:" + lib["key"], before[0], before[1]))
+        db.commit()

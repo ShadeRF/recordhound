@@ -240,3 +240,27 @@ def test_plex_read_lists_every_song_under_album_and_track_artists():
     plex.artists()
     assert plex.songs["radiohead|karmapolice"] == "t1"
     assert plex.songs["dualipa|onekiss"] == plex.songs["calvinharris|onekiss"] == "t2"
+
+
+def test_any_album_can_go_to_lidarr_and_remembers_the_choice(client, monkeypatch):
+    c, m = client
+    sent = []
+
+    class FakeLidarr:
+        def __init__(self, *a):
+            pass
+
+        def add_album(self, *a):
+            sent.append(a)
+            return "Kid A"
+    monkeypatch.setattr(m, "Lidarr", FakeLidarr)
+    r = c.post("/api/lidarr/album", json={"artist": "Radiohead", "title": "Kid A", "quality_id": 3, "metadata_id": 4, "root": "/m"})
+    assert r.json() == {"ok": True, "title": "Kid A"} and sent == [("Radiohead", "Kid A", 3, 4, "/m")]
+    assert c.get("/api/lidarr/last").json()["quality_id"] == 3
+
+    class Broken(FakeLidarr):
+        def add_album(self, *a):
+            raise APIError("Lidarr couldn't find Kid A by Radiohead on MusicBrainz")
+    monkeypatch.setattr(m, "Lidarr", Broken)
+    r = c.post("/api/lidarr/album", json={"artist": "Radiohead", "title": "Kid A", "quality_id": 3, "metadata_id": 4, "root": "/m"})
+    assert r.status_code == 502 and "couldn't find Kid A" in r.json()["detail"]
