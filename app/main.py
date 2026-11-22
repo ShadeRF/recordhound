@@ -531,6 +531,27 @@ def _deezer(key, name, max_age=14):
     return hit
 
 
+@app.get("/api/album/{album_id}/tracks")
+def album_tracks(album_id: int, name: str = ""):
+    """A Deezer album's tracks, each marked if you own it in Plex or liked it on Spotify."""
+    tracks = db.cache_get(f"dzalb:{album_id}", 30)
+    if tracks is None:
+        try:
+            tracks = _dz.album_tracks(album_id)
+        except Exception as e:
+            raise HTTPException(502, f"Couldn't get the track list from Deezer: {friendly_error(e)}")
+        db.cache_put(f"dzalb:{album_id}", tracks)
+        db.commit()
+    songs = db.get_meta("plex_songs")
+    liked = {f"{ak}|{song_key(t.get('title'))}" for t in db.get_meta("spotify_liked") or []
+             for credit in t.get("artists") or [] for ak in credit_keys(credit)}
+    out = []
+    for t in tracks:
+        keys = {f"{ak}|{song_key(t.get('title'))}" for ak in credit_keys(name) | credit_keys(t.get("artist") or "")}
+        out.append({**t, "owned": bool(songs and any(k in songs for k in keys)), "liked": bool(keys & liked)})
+    return {"tracks": out, "checked_plex": songs is not None}
+
+
 @app.get("/api/art/{key}")
 def art(key: str, name: str = ""):
     """Artist photo from Deezer, looked up once and cached."""

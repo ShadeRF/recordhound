@@ -557,6 +557,9 @@ def test_albums_on_an_artist_page_open_with_links_and_lidarr(page, site, monkeyp
     db.cache_put("dz:" + lib["key"], {"id": 1, "name": lib["name"], "albums": [
         {"id": 11, "title": owned, "type": "album", "date": "2001-01-01", "cover": None},
         {"id": 22, "title": "Not Yet Mine", "type": "album", "date": "2024-05-01", "cover": None}]})
+    db.cache_put("dzalb:22", [{"n": 1, "disc": 1, "title": "First Song", "duration": 200, "preview": "https://cdn.test/1.mp3", "artist": lib["name"]},
+                               {"n": 2, "disc": 1, "title": "Second Song", "duration": 65, "preview": None, "artist": lib["name"]}])
+    db.set_meta("plex_songs", {lib["key"] + "|firstsong": "9"})
     db.commit()
     monkeypatch.setattr(config, "LIDARR_URL", "http://lidarr.test"); monkeypatch.setattr(config, "LIDARR_API_KEY", "k")
     sent = []
@@ -579,6 +582,11 @@ def test_albums_on_an_artist_page_open_with_links_and_lidarr(page, site, monkeyp
         page.click("#drawer [data-alb='0']")   # newest first: the one you don't own
         box = page.locator("#albBox")
         assert box.is_visible() and "Not Yet Mine" in box.inner_text() and "deezer.com/album/22" in box.inner_html()
+        page.wait_for_selector("#albTracks .atrk")
+        tracks = page.locator("#albTracks .atrk")
+        assert tracks.count() == 2 and "3:20" in tracks.first.inner_text() and "1:05" in tracks.nth(1).inner_text()
+        assert tracks.first.locator(".own-t").count() == 1 and tracks.nth(1).locator(".pb.off").count() == 1
+        assert "You own 1 of these 2 tracks" in box.inner_text()
         box.locator("[data-alb-lidarr]").click()
         box.locator("[data-lk-add]").click()
         page.wait_for_function("document.querySelector('#albBox .albl').innerText.includes('Sent to Lidarr')")
@@ -589,6 +597,8 @@ def test_albums_on_an_artist_page_open_with_links_and_lidarr(page, site, monkeyp
         assert box.is_hidden()
     finally:   # leave the cache as it was, for the tests that run after this one
         db.conn().execute("DELETE FROM cache WHERE k=?", ("dz:" + lib["key"],))
+        db.conn().execute("DELETE FROM cache WHERE k='dzalb:22'")
+        db.set_meta("plex_songs", None)
         if before:
             db.conn().execute("INSERT INTO cache(k, json, at) VALUES (?, ?, ?)", ("dz:" + lib["key"], before[0], before[1]))
         db.commit()

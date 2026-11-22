@@ -246,14 +246,25 @@ function playTrack(i) {
   audio.src = t.preview; audio.play().catch(() => toast("Couldn't play that preview"));
   playing = id; nowPlaying(t, current.name);
 }
+let albumTracks = [];   // the open album's tracks
+function playAlbumTrack(i) {
+  const t = albumTracks.find(x => x.i === i); if (!t || !t.preview) return;
+  const id = `alb:${t.album}:${i}`;
+  if (playing === id && !audio.paused) { audio.pause(); return; }
+  audio.src = t.preview; audio.play().catch(() => toast("Couldn't play that preview"));
+  playing = id; nowPlaying({ title: t.title, cover: t.cover }, t.by);
+}
 function nowPlaying(t, artist) {
   $("np").innerHTML = `${t.cover ? `<img src="${esc(t.cover)}" alt="">` : ""}<div><b>${esc(t.title)}</b><small>${esc(artist)} · 30-second preview</small></div>
     <button id="npToggle" title="Play/pause">${audio.paused ? "▶" : "❚❚"}</button><button id="npClose" title="Stop">×</button>`;
   $("np").classList.add("on");
 }
 audio.addEventListener("play", paintTracks); audio.addEventListener("pause", paintTracks);
-audio.addEventListener("ended", () => { const [k, i] = (playing || "").split(":"); if (current && current.key === k && current.tracks[+i + 1]) playTrack(+i + 1); else paintTracks(); });
-audio.addEventListener("timeupdate", () => { const b = document.querySelector(".trk.on .tprog i"); if (b && audio.duration) b.style.width = (audio.currentTime / audio.duration * 100) + "%"; });
+audio.addEventListener("ended", () => {
+  if ((playing || "").startsWith("alb:")) { const i = +playing.split(":")[2]; if (albumTracks.find(t => t.i > i && t.preview)) playAlbumTrack(albumTracks.find(t => t.i > i && t.preview).i); else paintTracks(); return; }
+  const [k, i] = (playing || "").split(":"); if (current && current.key === k && current.tracks[+i + 1]) playTrack(+i + 1); else paintTracks();
+});
+audio.addEventListener("timeupdate", () => { const b = document.querySelector(".trk.on .tprog i, .atrk.on .tprog i"); if (b && audio.duration) b.style.width = (audio.currentTime / audio.duration * 100) + "%"; });
 $("np").onclick = e => {
   if (e.target.id === "npClose") { audio.pause(); audio.removeAttribute("src"); playing = null; $("np").classList.remove("on"); paintTracks(); }
   if (e.target.id === "npToggle") audio.paused ? audio.play() : audio.pause();
@@ -263,6 +274,11 @@ function paintTracks() {
     const on = current && playing === current.key + ":" + el.dataset.i;
     el.classList.toggle("on", !!on);
     el.querySelector(".pb").innerHTML = on && !audio.paused ? ICON.pause : ICON.play;
+  });
+  document.querySelectorAll(".atrk").forEach(el => {
+    const on = playing === `alb:${el.dataset.alb}:${el.dataset.ai}`;
+    el.classList.toggle("on", on);
+    const pb = el.querySelector(".pb"); if (pb) pb.innerHTML = on && !audio.paused ? ICON.pause : ICON.play;
   });
   const tg = $("npToggle"); if (tg) tg.textContent = audio.paused ? "▶" : "❚❚";
 }
@@ -381,9 +397,9 @@ function renderDrawer(r, loading) {
 function showAlbum(i) {
   const r = current, a = r.albums[i], box = $("albBox");
   const again = !box.hidden && box.dataset.i === String(i);
-  document.querySelectorAll("#drawer [data-alb]").forEach(b => { b.setAttribute("aria-expanded", "false"); b.classList.remove("sel"); });
+  document.querySelectorAll("#drawer button[data-alb]").forEach(b => { b.setAttribute("aria-expanded", "false"); b.classList.remove("sel"); });
   if (again) { box.hidden = true; return; }   // a second click on the same album closes it
-  const btn = document.querySelector(`#drawer [data-alb="${i}"]`); btn.classList.add("sel"); btn.setAttribute("aria-expanded", "true");
+  const btn = document.querySelector(`#drawer button[data-alb="${i}"]`); btn.classList.add("sel"); btn.setAttribute("aria-expanded", "true");
   const q = encodeURIComponent(`${r.name} ${a.title}`);
   const plex = a.plex_rk && lastStatus.plex_machine ? `https://app.plex.tv/desktop/#!/server/${lastStatus.plex_machine}/details?key=${encodeURIComponent("/library/metadata/" + a.plex_rk)}` : "";
   box.dataset.i = i; box.hidden = false;
@@ -394,8 +410,29 @@ function showAlbum(i) {
         ${lastStatus.lidarr && !a.owned ? `<button class="btn primary" data-alb-lidarr>${ICON.plus}Add album to Lidarr</button>` : ""}
         ${a.id ? `<a class="btn" href="https://www.deezer.com/album/${encodeURIComponent(a.id)}" target="_blank" rel="noopener"><img class="svc" src="${fav("deezer.com")}" alt="">Deezer</a>` : ""}
         <a class="btn" href="https://open.spotify.com/search/${q}" target="_blank" rel="noopener"><img class="svc" src="${fav("spotify.com")}" alt="">Spotify</a></div>
-      <div class="albl" hidden></div></div>`;
+      <div class="albl" hidden></div></div>
+    <div class="atracks" id="albTracks">${a.id ? `<div class="shimmer" style="height:120px"></div>` : ""}</div>`;
   box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  if (a.id) loadAlbumTracks(r, a, i);
+}
+const mmss = s => s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "";
+async function loadAlbumTracks(r, a, i) {
+  let d; try { d = await api(`/api/album/${encodeURIComponent(a.id)}/tracks?name=${encodeURIComponent(r.name)}`); }
+  catch (e) { if ($("albTracks")) $("albTracks").innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+  const box = $("albBox"); if (!box || box.hidden || box.dataset.i !== String(i) || current !== r) return;   // you've opened something else since
+  albumTracks = d.tracks.map((t, n) => ({ ...t, i: n, album: a.id, cover: a.cover, by: t.artist || r.name }));
+  const discs = new Set(d.tracks.map(t => t.disc)).size > 1, owned = d.tracks.filter(t => t.owned).length;
+  let disc = null;
+  $("albTracks").innerHTML = (d.checked_plex && owned && !a.owned ? `<p class="muted atr-note">You own ${owned} of these ${d.tracks.length} tracks.</p>` : "") +
+    albumTracks.map(t => {
+      const head = discs && t.disc !== disc ? `<div class="adisc">Disc ${disc = t.disc}</div>` : "";
+      return `${head}<div class="atrk" data-alb="${esc(a.id)}" data-ai="${t.i}">
+        ${t.preview ? `<button class="pb" aria-label="Play ${esc(t.title)}">${ICON.play}</button>` : `<span class="pb off" title="No preview"></span>`}
+        <span class="an">${t.n || ""}</span><span class="nm">${esc(t.title)}${t.artist && t.artist !== r.name ? ` <small>${esc(t.artist)}</small>` : ""}</span>
+        ${t.liked ? `<span class="lk-heart" title="Liked on Spotify">♥</span>` : ""}${t.owned ? `<span class="own-t" title="In your Plex library">✓</span>` : ""}
+        <span class="tprog"><i></i></span><span class="dur">${mmss(t.duration)}</span></div>`;
+    }).join("");
+  paintTracks();
 }
 // Quality, metadata and folder for sending one album to Lidarr; filled in from the last add.
 async function albumLidarrForm(box, note) {
@@ -416,7 +453,8 @@ const albumLidarrChoice = box => ({ quality_id: +box.querySelector(".lkQ").value
 const albumNote = (artist, inLidarr) => `Lidarr monitors and searches for this album only.${inLidarr ? "" : ` ${esc(artist)} isn't in Lidarr yet, so they're added with nothing else monitored.`}`;
 $("drawer").addEventListener("click", async e => {
   const t = e.target.closest(".trk"); if (t) { playTrack(+t.dataset.i); return; }
-  const ab = e.target.closest("[data-alb]"); if (ab) { showAlbum(+ab.dataset.alb); return; }
+  const at = e.target.closest(".atrk"); if (at) { playAlbumTrack(+at.dataset.ai); return; }
+  const ab = e.target.closest("button[data-alb]"); if (ab) { showAlbum(+ab.dataset.alb); return; }
   if (e.target.closest("[data-alb-lidarr]")) {
     const box = document.querySelector("#albBox .albl");
     if (!box.hidden) { box.hidden = true; return; }

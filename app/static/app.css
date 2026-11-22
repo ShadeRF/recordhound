@@ -493,6 +493,24 @@ svg.inl { width: 14px; height: 14px; vertical-align: -2px; stroke: currentColor;
 .albinfo small { color: var(--dim); }
 .albacts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .albl { grid-column: 1 / -1; margin-top: 10px; }
+.atracks { grid-column: 1 / -1; display: flex; flex-direction: column; }
+.atracks:empty { display: none; }
+.atr-note { margin: 0 0 6px; font-size: 12px; }
+.adisc { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin: 10px 0 4px 8px; }
+.atrk { display: flex; align-items: center; gap: 10px; padding: 5px 8px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+.atrk:hover { background: #221f1c; }
+.atrk.on { background: rgba(239,100,80,.12); }
+.atrk .pb { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #1c0d0a; display: grid; place-items: center; flex: none; border: 0; cursor: pointer; }
+.atrk .pb svg { width: 11px; height: 11px; fill: currentColor; stroke: none; }
+.atrk .pb.off { background: var(--line); cursor: default; }
+.atrk .an { width: 20px; text-align: right; color: var(--dim); flex: none; font-variant-numeric: tabular-nums; }
+.atrk .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.atrk .nm small { color: var(--dim); }
+.atrk .own-t { color: var(--good); font-weight: 700; }
+.atrk .tprog { width: 40px; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; flex: none; visibility: hidden; }
+.atrk.on .tprog { visibility: visible; }
+.atrk .tprog i { display: block; height: 100%; width: 0; background: var(--accent); }
+.atrk .dur { color: var(--dim); width: 36px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
 .albl .row, .lk-box .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .albl label, .lk-box label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--dim); }
 .albl select, .lk-box select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font: inherit; max-width: 100%; }

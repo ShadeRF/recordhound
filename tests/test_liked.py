@@ -264,3 +264,31 @@ def test_any_album_can_go_to_lidarr_and_remembers_the_choice(client, monkeypatch
     monkeypatch.setattr(m, "Lidarr", Broken)
     r = c.post("/api/lidarr/album", json={"artist": "Radiohead", "title": "Kid A", "quality_id": 3, "metadata_id": 4, "root": "/m"})
     assert r.status_code == 502 and "couldn't find Kid A" in r.json()["detail"]
+
+
+def test_album_tracks_show_what_you_own_and_liked(client, monkeypatch):
+    c, m = client
+    calls = []
+
+    class FakeDeezer:
+        def album_tracks(self, album_id):
+            calls.append(album_id)
+            return [{"n": 1, "disc": 1, "title": "Airbag", "duration": 284, "preview": "p1", "artist": "Radiohead"},
+                    {"n": 2, "disc": 1, "title": "Karma Police (Remastered)", "duration": 264, "preview": "p2", "artist": "Radiohead"},
+                    {"n": 3, "disc": 1, "title": "Idioteque", "duration": 309, "preview": None, "artist": "Radiohead"}]
+    monkeypatch.setattr(m, "_dz", FakeDeezer())
+    db.conn().execute("DELETE FROM cache WHERE k LIKE 'dzalb:%'")
+    db.commit()
+    d = c.get("/api/album/555/tracks?name=Radiohead").json()
+    assert [(t["title"], t["owned"], t["liked"]) for t in d["tracks"]] == [
+        ("Airbag", True, False), ("Karma Police (Remastered)", True, True), ("Idioteque", False, True)]
+    assert d["checked_plex"] and d["tracks"][0]["duration"] == 284
+    c.get("/api/album/555/tracks?name=Radiohead")
+    assert calls == [555]   # cached after the first look
+
+    class Down:
+        def album_tracks(self, album_id):
+            raise clients.requests.ConnectionError("down")
+    monkeypatch.setattr(m, "_dz", Down())
+    r = c.get("/api/album/556/tracks?name=Radiohead")
+    assert r.status_code == 502 and db.cache_get("dzalb:556") is None   # a failure isn't remembered

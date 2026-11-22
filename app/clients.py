@@ -606,6 +606,12 @@ class Deezer:
                  "cover": (t.get("album") or {}).get("cover_medium"), "duration": t.get("duration")}
                 for t in self._get(f"/artist/{artist_id}/top", limit=n).get("data", []) if t.get("preview")]
 
+    def album_tracks(self, album_id):
+        """An album's track list, in order, with 30-second previews."""
+        return [{"n": t.get("track_position"), "disc": t.get("disk_number") or 1, "title": t.get("title"), "duration": t.get("duration"),
+                 "preview": t.get("preview") or None, "artist": (t.get("artist") or {}).get("name")}
+                for t in self._get(f"/album/{album_id}/tracks", limit=200).get("data", [])]
+
     def albums(self, artist_id):
         out = []
         for a in self._get(f"/artist/{artist_id}/albums", limit=200).get("data", []):
